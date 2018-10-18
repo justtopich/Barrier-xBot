@@ -121,10 +121,12 @@ class ColorLabeler:
         min_colours = {}
         for key, name in webcolors.css3_hex_to_names.items():
             r_c, g_c, b_c = webcolors.hex_to_rgb(key)
-            rd = (r_c - rgb[0]) ** 2
+            rd = (r_c - rgb[2]) ** 2
             gd = (g_c - rgb[1]) ** 2
-            bd = (b_c - rgb[2]) ** 2
+            bd = (b_c - rgb[0]) ** 2
             min_colours[(rd + gd + bd)] = name
+        
+        aa = min(min_colours.keys())
         return min_colours[min(min_colours.keys())]
     
     def get_html_name(self, rgbIn):
@@ -137,18 +139,19 @@ class ColorLabeler:
 
 class Sensor:
     def __init__(self,roi):
-        # self.zone = None
         self.img = roi[0]
         self.startPx = roi[1]
         self.endPx = roi[2]
         self.centerPx = self.get_center()
-        self.lastState = None
-        self.reaction = 5
-        # self.lastAvgColors = None
+        # self.lastState = None
+        self.reaction = 0.5
         self.avgColor = self.avg_color()
-        self.colorName = self.avg_color_name()
+        self.avgColorTrace = self.avgColor
+        self.colorName = self.avg_color_name(self.avgColor)
         self.buffer = Queue()
-        self.bufferSize = 5
+        self.buffer.maxsize = 6
+        while self.buffer.full() is False:
+            self.buffer.put(self.avgColor)
 
     def get_center(self):
         return (round(((self.endPx[0] - self.startPx[0]) / 2) + self.startPx[0]),
@@ -159,25 +162,35 @@ class Sensor:
         return average color for this frame
         :return:
         """
-        avgRow = np.average(img, axis=0)
+        avgRow = np.average(self.img, axis=0)
         avg = np.average(avgRow, axis=0)
-        return (int(avg[0]), int(avg[1]), int(avg[2]))
+        return [int(avg[0]), int(avg[1]), int(avg[2])]
     
     def avg_color_trace(self):
         """
         return average color for last frame * reaction
         :return:
         """
-        avg = np.average([i.avgColor for i in self.lastState])
+        ls = []
+        for n, i in enumerate(self.buffer.queue):
+            count = round((n+1)/self.reaction)
+            while count != 0:
+                ls.append(i)
+                count-=1
+        avg = np.average(ls, axis=0)
         return (int(avg[0]), int(avg[1]), int(avg[2]))
     
-    def avg_color_name(self):
-        return colorLabeler.closest_name(self.avgColor)
+    def avg_color_name(self, avgColor):
+        return colorLabeler.closest_name(avgColor)
     
-    # def update(self, img):
-        # [[imgZone], (startPx), (endPx), (centerPos)(avgColor), colorName]
-        # self.
-        # self.startPx =
+    def update(self, img):
+        self.img = img[0]
+        self.buffer.get()
+        self.buffer.task_done()
+        self.avgColor = self.avg_color()
+        self.buffer.put(self.avgColor)
+        self.avgColorTrace = self.avg_color_trace()
+        self.colorName = self.avg_color_name(self.avgColorTrace)
 
 # sensors.append([self.cells[i][0], self.cells[i][1], self.cells[i][2],
 #                 self.get_cell_center(self.cells[i][1],self.cells[i][2]),
@@ -194,12 +207,13 @@ class Vision:
         self.imgWidth -= 14
 
         # координаты roi
-        self.roiPositions = []
+        self.roiCoordinats = []
         for y in range(0, self.imgHeight, self.yStep):
             for x in range(0, self.imgWidth, self.xStep):
                 y1 = y + self.yStep
                 x1 = x + self.xStep
-                self.roiPositions.append([[y,y1], [x,x1]])
+                # cell = img[y:y + self.yStep, x:x + self.xStep]
+                self.roiCoordinats.append([[x,y], [x1,y1]])
 
         # весь кадр по частям
         self.roiList = []
@@ -208,26 +222,44 @@ class Vision:
         self.roiSensors = [(round(len(self.roiList) * n)) for n in roi_pos]
         
         self.sensors = {}
-        for n, i in enumerate(self.roiSensors):
+        for i in self.roiSensors:
             sensor = Sensor(self.roiList[i])
-            self.sensors[n] = sensor
+            self.sensors[i] = sensor
      
     # возращает весь кадр по частям
-    def cut_img(self, img):
+    def cut_img(self, img, all=True):
+        if all is False:
+            ls=self.roiSensors
+        else:
+            ls = self.roiCoordinats
         self.roiList.clear()
-        for pos in self.roiPositions:
+        for pos in ls:
             # imgGrid =cv2.rectangle(img, (x, y), (x1, y1), (0, 255, 0))
-            roi = img[pos[0][0]:pos[0][1], pos[1][0]:pos[1][1]]
+            # cell = img[y:y + self.yStep, x:x + self.xStep]
+            roi = img[pos[0][1]:pos[1][1], pos[0][0]:pos[1][0]]
+            # show_result(roi, do)
+            # time.sleep(0.5)
             # [[imgZone], (stPx), (endPx), (centerPos)]
-            self.roiList.append([roi, (pos[1][0], pos[0][0]), (pos[1][0], pos[0][1])])
+            self.roiList.append([roi, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1])])
         # cv2.imwrite(f"asas.png" , img)
     
     # получение конкретных зон, их предобработка
+    def update_sensors(self):
+        # print(self.sensors[15].img[0]==self.sensors[26].img[0])
+        for i in self.roiSensors:
+            # show_result(self.roiList[i][0], do)
+            # time.sleep(0.5)
+            self.sensors[i].update(self.roiList[i])
+        # aa=''
+    
     def get_sensors(self):
-        for i in self.roiPositions:
-            self.sensors[i].update(self.celss[i])
         return self.sensors
-
+        
+    def look(self, img):
+        self.cut_img(img, all=True)
+        self.update_sensors()
+        return self.sensors
+    
 class Stabilizer:
     def stabilize(self,image, old_frame):
 
@@ -298,7 +330,7 @@ window = win32gui.GetWindowRect(hwnd)
 print('window', window)
 colorLabeler = ColorLabeler()
 stabilizer = Stabilizer()
-clear = '\n'*19
+font = cv2.FONT_HERSHEY_SIMPLEX
 
 if __name__ == "__main__":
     qIn = LifoQueue(maxsize=2)
@@ -306,14 +338,20 @@ if __name__ == "__main__":
     
     Thread(target=grub, args=(window,qIn,0, do,)).start()
     last_img = img = get_img()
-    angels = [0.11, 0.185, 0.81, 0.885]
-    sensors = [0.415, 0.48,
+    
+    # нужно указать в % примернуе зоны
+    angelsPos = [0.11, 0.185, 0.81, 0.885]
+    sensorsPos = [0.415, 0.48,
                0.52, 0.545, 0.55, 0.57,
                0.615, 0.63, 0.665, 0.68,
                0.72, 0.77,
                0.835 , 0.86]
-    vision = Vision(img, angels+sensors)
+    clear = '\n' * (len(angelsPos) + len(sensorsPos) + 2)
+    vision = Vision(img, angelsPos + sensorsPos)
     
+    # после инциаоизации можно получить реальные позиции
+    angelsPos = vision.roiSensors[:4]
+    sensorsPos = vision.roiSensors[4:]
     
     while True:
         st = time.time()
@@ -322,40 +360,36 @@ if __name__ == "__main__":
         #     img, result = stabilizer.stabilize(img, last_img)
         # except:
         #     result = img
-        vision.cut_img(img)
+        sensors = vision.look(img)
         # res, mas = rgb_to_hsv(img)
     
-        # angels = vision.get_sensors([0.11, 0.185, 0.81, 0.885])
-        # roadSens = vision.get_sensors([0.415, 0.48,
-        #                               0.52, 0.545, 0.55, 0.57,
-        #                               0.615, 0.63, 0.665, 0.68,
-        #                               0.72, 0.77,
-        #                               0.835 , 0.86])
-        # [[imgZone], (stPx), (endPx), (centerPos) (avgColor), colorName]
-
         inGame = False
-        for i in angels:
-            if i[5] not in ['black', 'maroon']:
+        for n, i in enumerate(angelsPos):
+            if sensors[i].colorName not in ['black', 'maroon']:
                 inGame = True
-            cv2.rectangle(img, i[1], i[2], (255, 255, 255))
-            cv2.circle(img, i[3], 9, i[4], -1)
-            cv2.circle(img, i[3], 10, (255, 255, 255), 1)
-        
-        for i in roadSens:
-            cv2.rectangle(img, i[1], i[2], (0, 255, 0))
-            cv2.circle(img, i[3], 9, i[4], -1)
-            cv2.circle(img, i[3], 10, (0, 255, 0), 1)
+            cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
+            cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
+            cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
+            cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
+                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+        for n, i in enumerate(sensorsPos):
+            cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
+            cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
+            cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
+            cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
+                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
     
         show_result(img, do)
         qIn.task_done()
         print(f'{clear}\n  fps: {round(1 / (time.time()-st),1)} In game: {inGame}'
-              f'\n  angle[0]: {angels[0][5]}',
-              f'\n  angle[1]: {angels[1][5]}',
-              f'\n  angle[2]: {angels[2][5]}',
-              f'\n  angle[3]: {angels[3][5]}'
+              f'\n  angle[0]: {sensors[angelsPos[0]].colorName}',
+              f'\n  angle[1]: {sensors[angelsPos[1]].colorName}',
+              f'\n  angle[2]: {sensors[angelsPos[2]].colorName}',
+              f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
               )
 
-        for n, i in enumerate(roadSens):
-            print(f'  sens[{n}]: {i[5]}')
+        for n, i in enumerate(sensorsPos):
+            print(f'  sens[{n}]: {sensors[i].colorName}')
         last_img = img
     do = False
