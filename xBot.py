@@ -126,7 +126,7 @@ class ColorLabeler:
             bd = (b_c - rgb[0]) ** 2
             min_colours[(rd + gd + bd)] = name
         
-        aa = min(min_colours.keys())
+        # aa = min(min_colours.keys())
         return min_colours[min(min_colours.keys())]
     
     def get_html_name(self, rgbIn):
@@ -144,7 +144,7 @@ class Sensor:
         self.endPx = roi[2]
         self.centerPx = self.get_center()
         # self.lastState = None
-        self.reaction = 0.5
+        self.reaction = 1
         self.avgColor = self.avg_color()
         self.avgColorTrace = self.avgColor
         self.colorName = self.avg_color_name(self.avgColor)
@@ -168,16 +168,40 @@ class Sensor:
     
     def avg_color_trace(self):
         """
-        return average color for last frame * reaction
+        Duplicate frames by they buffer position and calc avgColor.
+        count = x / position * x for linear dependency where x - reaction.
+	    For linear dependency newer frame will have maximum influence.
         :return:
         """
+        # frames = [[100, 100, 10, 10],
+        #           [10, 100, 100, 10],
+        #           [10, 10, 100, 100],
+        #           [10, 10, 10, 100],
+        #           [10, 10, 10, 10],
+        #           [10, 10, 10, 10],
+        #           ]
+        
+        counts = []
+        for n in range(1, self.buffer.maxsize+1):
+            # counts.append(1) # fixded
+            # counts.append(round(self.reaction/((n+1)))) # parabola
+            counts.append(round((n + 1) / self.reaction))  # linier reverse
+        counts = counts[::-1]
+        
+        frames=list(self.buffer.queue)
         ls = []
-        for n, i in enumerate(self.buffer.queue):
-            count = round((n+1)/self.reaction)
-            while count != 0:
-                ls.append(i)
-                count-=1
+        for n, i in enumerate(counts):
+            # print(n,i)
+            if i==0: break
+            while counts[n]!=0:
+                ls.append(frames[n])
+                counts[n]-=1
+        # input()
+        if len(ls)==0:
+            raise Exception("No frames to calc avgColor. Set right reaction and buffer.")
         avg = np.average(ls, axis=0)
+        # avg = (int(avg[0]), int(avg[1]), int(avg[2]), int(avg[3]))
+        # input(avg)
         return (int(avg[0]), int(avg[1]), int(avg[2]))
     
     def avg_color_name(self, avgColor):
@@ -325,7 +349,12 @@ hwnd = win32gui.FindWindow(None, r'BARRIER X - you are a monster!'
                                  r'- MPC-BE x64 - v1.5.2 (build 3445) beta')
 # print(get_windows_titles())
 # hwnd = win32gui.FindWindow(None, 'https://player.twitch.tv - Twitch - Mozilla Firefox')
-win32gui.SetForegroundWindow(hwnd)
+try:
+    win32gui.SetForegroundWindow(hwnd)
+except Exception:
+    print("Не могу захватить экран")
+    time.sleep(3)
+    os._exit(1)
 window = win32gui.GetWindowRect(hwnd)
 print('window', window)
 colorLabeler = ColorLabeler()
@@ -346,7 +375,7 @@ if __name__ == "__main__":
                0.615, 0.63, 0.665, 0.68,
                0.72, 0.77,
                0.835 , 0.86]
-    clear = '\n' * (len(angelsPos) + len(sensorsPos) + 2)
+    clear = '\n' * (len(angelsPos) + len(sensorsPos))
     vision = Vision(img, angelsPos + sensorsPos)
     
     # после инциаоизации можно получить реальные позиции
@@ -354,6 +383,7 @@ if __name__ == "__main__":
     sensorsPos = vision.roiSensors[4:]
     
     while True:
+        # time.sleep(0.1)
         st = time.time()
         img = qIn.get()
         # try:
@@ -382,14 +412,14 @@ if __name__ == "__main__":
     
         show_result(img, do)
         qIn.task_done()
-        print(f'{clear}\n  fps: {round(1 / (time.time()-st),1)} In game: {inGame}'
-              f'\n  angle[0]: {sensors[angelsPos[0]].colorName}',
-              f'\n  angle[1]: {sensors[angelsPos[1]].colorName}',
-              f'\n  angle[2]: {sensors[angelsPos[2]].colorName}',
+        statistic = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
+              f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
+              f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
+              f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
               f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
-              )
 
         for n, i in enumerate(sensorsPos):
-            print(f'  sens[{n}]: {sensors[i].colorName}')
+            statistic += f'\n  sens[{n}]: {sensors[i].colorName}'
+        print(statistic)
         last_img = img
     do = False
