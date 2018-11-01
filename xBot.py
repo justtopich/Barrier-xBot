@@ -1,8 +1,8 @@
-import cv2
+import cv2, imutils
 # from PIL import Image, ImageStat
 import numpy as np
 import win32gui, mss, time, os, signal
-import ctypes
+import ctypes, math
 from scipy.spatial import distance as dist
 import webcolors
 
@@ -73,7 +73,88 @@ def rgb_to_hsv(img):
     res = cv2.bitwise_and(img, img, mask=mask)
     return res, mask
 
+
+# class Gyroscope()
+
+def counter_color(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # removing noise; blur
+    # gray = cv2.bilateralFilter(gray, 5, 17, 17)
+    # gray = cv2.medianBlur(gray, 5) # fast
+    edges = cv2.Canny(gray, 50, 200)
+
+    _, cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    
+    for cnt in cnts:
+        # print("!#len",len(cnt))
+        # if len(cnt)<40 or len(cnt)>60: continue
+    
+        rect = cv2.minAreaRect(cnt)
+        print('!#src angle', rect[2])
+        box = np.int0(cv2.boxPoints(rect))  # округление координат
+        area = int(rect[1][0] * rect[1][1])  # вычисление площади
+        print('!#area', area)
+    
+        if area < 150 or area>400: continue
+        # if area<15000: continue
+    
+        # center = (int(rect[0][0]), int(rect[0][1]))
+        # вычисление координат двух векторов, являющихся сторонам прямоугольника
+        edge1 = np.int0((box[1][0] - box[0][0], box[1][1] - box[0][1]))
+        edge2 = np.int0((box[2][0] - box[1][0], box[2][1] - box[1][1]))
+
+        if cv2.norm(edge2) < cv2.norm(edge1):
+            usedEdge = edge2
+        else:
+            usedEdge = edge1
+    
+        reference = (1, 0)  # горизонтальный вектор, задающий горизонт
+        angle = 180 / math.pi * math.acos((reference[0] * usedEdge[0] + reference[1] * usedEdge[1]) /
+                                          (cv2.norm(reference) * cv2.norm(usedEdge)))
+        if angle>90:
+            angle = 180 - angle
+        else:
+            angle = -1 * angle
+        img1 = img.copy()
+        cv2.drawContours(img1, [cnt], -1, (255, 255, 0), 1)
+    
+        size = cv2.contourArea(cnt)
+        print(size)
+    
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 0), 1)
+    
+        rows, cols = img.shape[:2]
+        [vx, vy, x, y] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
+        lefty = int((-x * vy / vx) + y)
+        righty = int(((cols - x) * vy / vx) + y)
+        try:
+            cv2.line(img1, (cols - 1, righty), (0, lefty), (0, 255, 0), 1)
+        except:
+            continue
+    
+        cv2.drawContours(img1, [box], 0, (0, 255, 0), 2)
+        print(rect[1][0])
+        im = imutils.rotate(img1, angle)
+    
+    
+        # approx Contours
+        # peri = cv2.arcLength(cnt, True)
+        # approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+        # cv2.drawContours(img, [approx], -1, (0, 255, 0), 2)
+        # x, y, w, h = cv2.boundingRect(approx)
+        # cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 0), 1)
+    
+    
+        cv2.imshow("Game Boy Screen", im)
+        # cv2.imshow("Game Boy Screen2", img)
+        cv2.waitKey(0)
+    return img
+
+
 class ColorLabeler:
+    __slots__ = 'colors', 'lab', 'colorNames'
+    
     def __init__(self):
         self.colors = {
             "red": (255, 0, 0),
@@ -126,7 +207,6 @@ class ColorLabeler:
             bd = (b_c - rgb[0]) ** 2
             min_colours[(rd + gd + bd)] = name
         
-        # aa = min(min_colours.keys())
         return min_colours[min(min_colours.keys())]
     
     def get_html_name(self, rgbIn):
@@ -169,8 +249,8 @@ class Sensor:
     def avg_color_trace(self):
         """
         Duplicate frames by they buffer position and calc avgColor.
-        count = x / position * x for linear dependency where x - reaction.
-	    For linear dependency newer frame will have maximum influence.
+        count = x / position * x for parabola dependency where x - reaction.
+	    For parabola dependency newer frame will have maximum influence.
         :return:
         """
         # frames = [[100, 100, 10, 10],
@@ -183,7 +263,7 @@ class Sensor:
         
         counts = []
         for n in range(1, self.buffer.maxsize+1):
-            # counts.append(1) # fixded
+            # counts.append(1) # fixed
             # counts.append(round(self.reaction/((n+1)))) # parabola
             counts.append(round((n + 1) / self.reaction))  # linier reverse
         counts = counts[::-1]
@@ -222,6 +302,9 @@ class Sensor:
 #                 ])
 
 class Vision:
+    __slots__ = ('imgHeight', 'imgWidth', 'sensors', 'yStep',
+            'xStep', 'roiCoordinats', 'roiList', 'roiSensors')
+    
     def  __init__(self, img, roi_pos):
         self.imgHeight = img.shape[0]
         self.imgWidth = img.shape[1]
@@ -251,9 +334,9 @@ class Vision:
             self.sensors[i] = sensor
      
     # возращает весь кадр по частям
-    def cut_img(self, img, all=True):
+    def cut_img(self, img, all = True):
         if all is False:
-            ls=self.roiSensors
+            ls = self.roiSensors
         else:
             ls = self.roiCoordinats
         self.roiList.clear()
@@ -280,7 +363,7 @@ class Vision:
         return self.sensors
         
     def look(self, img):
-        self.cut_img(img, all=True)
+        self.cut_img(img, all = True)
         self.update_sensors()
         return self.sensors
     
@@ -362,13 +445,13 @@ stabilizer = Stabilizer()
 font = cv2.FONT_HERSHEY_SIMPLEX
 
 if __name__ == "__main__":
-    qIn = LifoQueue(maxsize=2)
+    qIn = LifoQueue(maxsize=1)
     do=True
     
     Thread(target=grub, args=(window,qIn,0, do,)).start()
     last_img = img = get_img()
     
-    # нужно указать в % примернуе зоны
+    # нужно указать в % примерные зоны
     angelsPos = [0.11, 0.185, 0.81, 0.885]
     sensorsPos = [0.415, 0.48,
                0.52, 0.545, 0.55, 0.57,
@@ -379,13 +462,14 @@ if __name__ == "__main__":
     vision = Vision(img, angelsPos + sensorsPos)
     
     # после инциаоизации можно получить реальные позиции
-    angelsPos = vision.roiSensors[:4]
-    sensorsPos = vision.roiSensors[4:]
+    angelsPos, sensorsPos = vision.roiSensors[:4], vision.roiSensors[4:]
     
     while True:
         # time.sleep(0.1)
         st = time.time()
         img = qIn.get()
+        imgCanny = counter_color(img)
+        # input()
         # try:
         #     img, result = stabilizer.stabilize(img, last_img)
         # except:
@@ -410,7 +494,7 @@ if __name__ == "__main__":
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
     
-        show_result(img, do)
+        show_result(imgCanny, do)
         qIn.task_done()
         statistic = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
               f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
