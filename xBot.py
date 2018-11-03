@@ -5,6 +5,7 @@ import win32gui, mss, time, os, signal
 import ctypes, math
 from scipy.spatial import distance as dist
 import webcolors
+import statistics as stat
 
 from queue import LifoQueue, Queue
 from threading import Thread
@@ -73,84 +74,164 @@ def rgb_to_hsv(img):
     res = cv2.bitwise_and(img, img, mask=mask)
     return res, mask
 
+class Gyroscope():
+    def __init__(self, img):
+        self.img = img
+        self.imgHeight = img.shape[0]
+        self.imgWidth = img.shape[1]
+        self.imgArea = self.imgWidth * self.imgHeight
+        self.minArea = self.imgArea * 0.00016   # для фильтра по площади
+        self.maxArea = self.imgArea * 0.0011
+        # print(self.minArea, self.maxArea)
+        self.roiPos= self.get_roi_pos()
+        self.roi = self.get_roi()
+        self.reference = (1, 0)  # горизонтальный вектор, задающий горизонт
+        self.angels = [0,0,0]
+        self.horizon = 0
+        self.avgHorizon = None
+        self.buffer = Queue()
+        self.buffer.maxsize = 6
+        self.buffer.put(self.horizon)
+        
+    def get_roi_pos(self):
+        center = [round(self.imgWidth/2), round(self.imgHeight/2)]
+        x = round(self.imgWidth * -0.28 / 2 + center[0])
+        y = round(self.imgHeight * -0.4 / 2 + center[1])
+        x1 = round(self.imgWidth * 0.28 / 2 + center[0])
+        y1 = round(self.imgHeight * 0.02 / 2 + center[1])
+        return ([[x, y], [x1, y1]])
+        
+        # imgGrid = cv2.rectangle(img, (x, y), (x1, y1), (0, 255, 0))
+        # cv2.imshow("Game Boy Screen", imgGrid)
+        # cv2.waitKey(0)
 
-# class Gyroscope()
+    def get_roi(self):
+        return self.img[self.roiPos[0][1]:self.roiPos[1][1],
+                        self.roiPos[0][0]:self.roiPos[1][0]]
+    
+    def get_angels(self):
+        gray = cv2.cvtColor(self.roi, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 200)
+        _, cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        
+        self.angels.clear()
+        for cnt in cnts:
+            rect = cv2.minAreaRect(cnt)
+            box = np.int0(cv2.boxPoints(rect))  # округление координат
+            area = int(rect[1][0] * rect[1][1])  # вычисление площади
+            # print('!#area', area)
+    
+            # фильтр по площади
+            if area < self.minArea or area > self.maxArea: continue
+    
+            # координаты двух векторов, являющихся сторонам прямоугольника
+            edge1 = np.int0((box[1][0] - box[0][0], box[1][1] - box[0][1]))
+            edge2 = np.int0((box[2][0] - box[1][0], box[2][1] - box[1][1]))
+            # длина сторон
+            edgeNorm1 = cv2.norm(edge1)
+            edgeNorm2 = cv2.norm(edge2)
+            if edgeNorm2 < 1 : continue
+    
+            # фильтр по пропорциям
+            ratio = edgeNorm1/edgeNorm2
+            # print('!#ratio', ratio)
+            if not ((0.33 < ratio < 0.8) or (1.2 < ratio < 2.7)):
+                continue
+    
+            # поиск большей стороны
+            if edgeNorm2 < edgeNorm1:
+                usedEdge = edge2
+            else:
+                usedEdge = edge1
+    
+            angle = 180 / math.pi * math.acos((self.reference[0] * usedEdge[0] +
+                                               self.reference[1] * usedEdge[1]) /
+                                              (cv2.norm(self.reference) * cv2.norm(usedEdge)))
+            # фильтр по наклону
+            if (-50 < angle < -140) or (50 < angle < 140): continue
+    
+            # print('myAngle0', angle)
+            # определение направления поворота
+            if angle > 90:
+                angle = 180 - angle
+            else:
+                angle = -1 * angle
+            # print('myAngle', angle)
+            self.angels.append(angle)
+            # return
+    
+            # для отладки
+            # im = self.roi.copy()
+            #
+            # x, y, w, h = cv2.boundingRect(cnt)
+            # cv2.rectangle(im, (x, y), (x + w, y + h), (255, 255, 0), 1)
+            #
+            # rows, cols = im.shape[:2]
+            # [vx, vy, x, y] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
+            # lefty = int((-x * vy / vx) + y)
+            # righty = int(((cols - x) * vy / vx) + y)
+            # try:
+            #     cv2.line(im, (cols - 1, righty), (0, lefty), (255, 255, 0), 1)
+            # except:
+            #     continue
+            #
+            # print('!#myAngle', angle)
+            # im = imutils.rotate(im, angle)
+            # cv2.imshow("Game Boy Screen", im)
+            # cv2.waitKey(0)
 
-def counter_color(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # removing noise; blur
-    # gray = cv2.bilateralFilter(gray, 5, 17, 17)
-    # gray = cv2.medianBlur(gray, 5) # fast
-    edges = cv2.Canny(gray, 50, 200)
+        # для отладки
+        # im = self.roi.copy()
+        # self.get_horizon()
+        # print("!#avgAngle", self.horizon)
+        #
+        # im = imutils.rotate(im, self.horizon)
+        # cv2.imshow("Game Boy Screen", im)
+        # cv2.waitKey(0)
 
-    _, cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    
-    for cnt in cnts:
-        # print("!#len",len(cnt))
-        # if len(cnt)<40 or len(cnt)>60: continue
-    
-        rect = cv2.minAreaRect(cnt)
-        print('!#src angle', rect[2])
-        box = np.int0(cv2.boxPoints(rect))  # округление координат
-        area = int(rect[1][0] * rect[1][1])  # вычисление площади
-        print('!#area', area)
-    
-        if area < 150 or area>400: continue
-        # if area<15000: continue
-    
-        # center = (int(rect[0][0]), int(rect[0][1]))
-        # вычисление координат двух векторов, являющихся сторонам прямоугольника
-        edge1 = np.int0((box[1][0] - box[0][0], box[1][1] - box[0][1]))
-        edge2 = np.int0((box[2][0] - box[1][0], box[2][1] - box[1][1]))
+    # поиск среднего угла поворота исключая выбросы
+    def get_horizon(self):
+        """
+        1. сортировка
+        2. поиск медианы
+        3. удаление выбросов
+        4. нахождение средней
+        :return:
+        """
 
-        if cv2.norm(edge2) < cv2.norm(edge1):
-            usedEdge = edge2
+        def reject_outliers(data, m=2.):
+            # if not isinstance(data, np.ndarray):
+            data = np.array(data)
+            d = np.abs(data - np.median(data))
+            mdev = np.median(d)
+            s = d / mdev if mdev else 1.
+            res = data[s < m]
+            if type(res[0])!=np.float64:
+                res = res[0]
+            return res
+            # else:
+            #     d = np.abs(data - np.median(data))
+            #     mdev = np.median(d)
+            #     s = d / mdev if mdev else 0.
+            #     return data[s < m]
+        
+        size = len(self.angels)
+        if size < 3:
+            return
+            # self.horizon = 0
         else:
-            usedEdge = edge1
-    
-        reference = (1, 0)  # горизонтальный вектор, задающий горизонт
-        angle = 180 / math.pi * math.acos((reference[0] * usedEdge[0] + reference[1] * usedEdge[1]) /
-                                          (cv2.norm(reference) * cv2.norm(usedEdge)))
-        if angle>90:
-            angle = 180 - angle
-        else:
-            angle = -1 * angle
-        img1 = img.copy()
-        cv2.drawContours(img1, [cnt], -1, (255, 255, 0), 1)
-    
-        size = cv2.contourArea(cnt)
-        print(size)
-    
-        x, y, w, h = cv2.boundingRect(cnt)
-        cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 0), 1)
-    
-        rows, cols = img.shape[:2]
-        [vx, vy, x, y] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
-        lefty = int((-x * vy / vx) + y)
-        righty = int(((cols - x) * vy / vx) + y)
-        try:
-            cv2.line(img1, (cols - 1, righty), (0, lefty), (0, 255, 0), 1)
-        except:
-            continue
-    
-        cv2.drawContours(img1, [box], 0, (0, 255, 0), 2)
-        print(rect[1][0])
-        im = imutils.rotate(img1, angle)
-    
-    
-        # approx Contours
-        # peri = cv2.arcLength(cnt, True)
-        # approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-        # cv2.drawContours(img, [approx], -1, (0, 255, 0), 2)
-        # x, y, w, h = cv2.boundingRect(approx)
-        # cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 0), 1)
-    
-    
-        cv2.imshow("Game Boy Screen", im)
-        # cv2.imshow("Game Boy Screen2", img)
-        cv2.waitKey(0)
-    return img
+            self.horizon = np.average(reject_outliers(self.angels), axis=0)
+        # else:
+        #     self.horizon = np.average(self.angels, axis=0)
 
+    def update(self, img):
+        self.img = img
+        self.roi = self.get_roi()
+        self.get_angels()
+        self.get_horizon()
+        # self.buffer.task_done()
+        # self.buffer.put(self.horizon)
+        return self.horizon
 
 class ColorLabeler:
     __slots__ = 'colors', 'lab', 'colorNames'
@@ -441,7 +522,7 @@ except Exception:
 window = win32gui.GetWindowRect(hwnd)
 print('window', window)
 colorLabeler = ColorLabeler()
-stabilizer = Stabilizer()
+# stabilizer = Stabilizer()
 font = cv2.FONT_HERSHEY_SIMPLEX
 
 if __name__ == "__main__":
@@ -460,6 +541,7 @@ if __name__ == "__main__":
                0.835 , 0.86]
     clear = '\n' * (len(angelsPos) + len(sensorsPos))
     vision = Vision(img, angelsPos + sensorsPos)
+    gyroscope = Gyroscope(img)
     
     # после инциаоизации можно получить реальные позиции
     angelsPos, sensorsPos = vision.roiSensors[:4], vision.roiSensors[4:]
@@ -468,7 +550,9 @@ if __name__ == "__main__":
         # time.sleep(0.1)
         st = time.time()
         img = qIn.get()
-        imgCanny = counter_color(img)
+        # imgCanny = counter_color(img)
+        horizon = gyroscope.update(img)
+        img = imutils.rotate(img, horizon)
         # input()
         # try:
         #     img, result = stabilizer.stabilize(img, last_img)
@@ -493,10 +577,11 @@ if __name__ == "__main__":
             cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-    
-        show_result(imgCanny, do)
+
+        show_result(img, do)
         qIn.task_done()
         statistic = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
+              f'\n  horizon: {horizon}' \
               f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
               f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
               f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
