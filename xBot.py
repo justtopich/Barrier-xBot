@@ -5,10 +5,9 @@ import win32gui, mss, time, os, signal
 import ctypes, math
 from scipy.spatial import distance as dist
 import webcolors
-# import statistics as stat
-
 from queue import LifoQueue, Queue
 from threading import Thread
+
 
 def shutdown_me(signal, frame):
         os._exit(1)
@@ -93,7 +92,7 @@ class Gyroscope():
         self.angels = [0,0,0]
         self.horizon = 0         # avg по нескольким цифрам
         self.buffer = Queue()
-        self.buffer.maxsize = 3
+        self.buffer.maxsize = settings['gyroscope']['bufferSize']
         while self.buffer.full() is False:
             self.buffer.put(self.horizon)
         
@@ -191,7 +190,7 @@ class Gyroscope():
         #
         # im = imutils.rotate(im, self.horizon)
         # cv2.imshow("Game Boy Screen", im)
-        # cv2.waitKey(0)
+        # cv2.waitKey(1)
 
     # поиск среднего угла поворота исключая выбросы
     def get_horizon(self):
@@ -342,12 +341,12 @@ class Sensor:
         self.endPx = roi[2]
         self.centerPx = self.get_center()
         # self.lastState = None
-        self.reaction = 1
+        self.reaction = settings['sensors']['reaction']
         self.avgColor = self.avg_color()
         self.avgColorTrace = self.avgColor
         self.colorName = self.avg_color_name(self.avgColor)
         self.buffer = Queue()
-        self.buffer.maxsize = 6
+        self.buffer.maxsize = settings['sensors']['bufferSize']
         while self.buffer.full() is False:
             self.buffer.put(self.avgColor)
 
@@ -414,22 +413,19 @@ class Sensor:
         self.avgColorTrace = self.avg_color_trace()
         self.colorName = self.avg_color_name(self.avgColorTrace)
 
-# sensors.append([self.cells[i][0], self.cells[i][1], self.cells[i][2],
-#                 self.get_cell_center(self.cells[i][1],self.cells[i][2]),
-#                 avg, colorLabeler.get_html_name(avg)
-#                 ])
-
 class Vision:
-    __slots__ = ['imgHeight', 'imgWidth', 'sensors', 'yStep',
-            'xStep', 'roiCoordinats', 'roiList', 'roiSensors']
+    # не наследуется
+    # __slots__ = ['imgHeight', 'imgWidth', 'sensors', 'yStep',
+    #         'xStep', 'roiCoordinats', 'roiList', 'roiSensors']
     
     def  __init__(self, img, roi_pos):
         self.imgHeight = img.shape[0]
         self.imgWidth = img.shape[1]
-        self.yStep = self.imgHeight // 10
-        self.xStep = self.imgWidth // 14
-        self.imgHeight -= 10
-        self.imgWidth -= 14
+        self.yStep = self.imgHeight // settings['sensors']['gridRows']
+        self.xStep = self.imgWidth // settings['sensors']['gridColums']
+        self.imgHeight -= settings['sensors']['gridRows']
+        self.imgWidth -= settings['sensors']['gridColums']
+
 
         # координаты roi
         self.roiCoordinats = []
@@ -445,7 +441,6 @@ class Vision:
         # индекс roi для сенсора
         self.cut_img(img)
         self.roiSensors = [(round(len(self.roiList) * n)) for n in roi_pos]
-        
         self.sensors = {}
         for i in self.roiSensors:
             sensor = Sensor(self.roiList[i])
@@ -459,7 +454,7 @@ class Vision:
             ls = self.roiCoordinats
         self.roiList.clear()
         for pos in ls:
-            # imgGrid =cv2.rectangle(img, (x, y), (x1, y1), (0, 255, 0))
+            # cv2.rectangle(img, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1]), (0, 255, 0))
             # cell = img[y:y + self.yStep, x:x + self.xStep]
             roi = img[pos[0][1]:pos[1][1], pos[0][0]:pos[1][0]]
             # show_result(roi, do)
@@ -467,6 +462,18 @@ class Vision:
             # [[imgZone], (stPx), (endPx), (centerPos)]
             self.roiList.append([roi, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1])])
         # cv2.imwrite(f"asas.png" , img)
+        
+    def cut_img_deb(self, img, all = True):
+        if all is False:
+            ls = self.roiSensors
+        else:
+            ls = self.roiCoordinats
+        self.roiList.clear()
+        for pos in ls:
+            cv2.rectangle(img, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1]), (0, 255, 0))
+            roi = img[pos[0][1]:pos[1][1], pos[0][0]:pos[1][0]]
+            self.roiList.append([roi, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1])])
+    
     
     # получение конкретных зон, их предобработка
     def update_sensors(self):
@@ -541,7 +548,6 @@ class Stabilizer:
 
             return frame, result
 
-
 def get_window(name):
     titles = get_windows_titles()
     for i in titles:
@@ -549,47 +555,7 @@ def get_window(name):
             return i
     raise Exception("Nothing to capture")
 
-
-signal.signal(signal.SIGTERM, shutdown_me)
-signal.signal(signal.SIGINT, shutdown_me)
-
-target = get_window('MPC')
-
-hwnd = win32gui.FindWindow(None, target)
-
-try:
-    win32gui.SetForegroundWindow(hwnd)
-except Exception:
-    print("Не могу захватить экран")
-    time.sleep(3)
-    os._exit(1)
-window = win32gui.GetWindowRect(hwnd)
-print('window', window)
-colorLabeler = ColorLabeler()
-# stabilizer = Stabilizer()
-font = cv2.FONT_HERSHEY_SIMPLEX
-
-if __name__ == "__main__":
-    qIn = LifoQueue(maxsize=1)
-    do=True
-    
-    Thread(target=grub, args=(window,qIn,0, do,)).start()
-    lastImg = img = get_img()
-    
-    # нужно указать в % примерные зоны
-    angelsPos = [0.11, 0.185, 0.81, 0.885]
-    sensorsPos = [0.415, 0.48,
-               0.52, 0.545, 0.55, 0.57,
-               0.615, 0.63, 0.665, 0.68,
-               0.72, 0.77,
-               0.835 , 0.86]
-    clear = '\n' * (len(angelsPos) + len(sensorsPos))
-    vision = Vision(img, angelsPos + sensorsPos)
-    gyroscope = Gyroscope(img)
-    
-    # после инциаоизации можно получить реальные позиции
-    angelsPos, sensorsPos = vision.roiSensors[:4], vision.roiSensors[4:]
-    
+def xbot():
     while True:
         # time.sleep(0.1)
         st = time.time()
@@ -604,7 +570,7 @@ if __name__ == "__main__":
         #     result = img
         sensors = vision.look(img)
         # res, mas = rgb_to_hsv(img)
-    
+        
         inGame = False
         for n, i in enumerate(angelsPos):
             if sensors[i].colorName not in ['black', 'maroon']:
@@ -614,25 +580,74 @@ if __name__ == "__main__":
             cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-
+        
         for n, i in enumerate(sensorsPos):
             cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
             cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
             cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-
+        
         show_result(img, do)
         qIn.task_done()
         stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
-              f'\n  horizon: {horizon}' \
-              f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
-              f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
-              f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
-              f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
-
+               f'\n  horizon: {horizon}' \
+               f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
+               f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
+               f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
+               f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
+        
         for n, i in enumerate(sensorsPos):
             stat += f'\n  sens[{n}]: {sensors[i].colorName}'
         print(stat)
         lastImg = img
+
+if __name__ == "__main__":
+    # Windows запускает модули exe из папки пользователя
+    # Папка должна определяться только исполняемым файлом
+    keys = os.path.split(os.path.abspath(os.path.join(os.curdir, __file__)))
+    homeDir = keys[0].replace('\\', '/') + '/'
+    appName = keys[1][:keys[1].find('.')].lower()
+    
+    from config import settings
+
+    signal.signal(signal.SIGTERM, shutdown_me)
+    signal.signal(signal.SIGINT, shutdown_me)
+
+    target = get_window(settings['general']['target'])
+
+    hwnd = win32gui.FindWindow(None, target)
+
+    try:
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception as e:
+        print(f"Не могу захватить экран: {e}")
+        time.sleep(3)
+        os._exit(1)
+    window = win32gui.GetWindowRect(hwnd)
+    print('window', window)
+    colorLabeler = ColorLabeler()
+    # stabilizer = Stabilizer()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    
+    qIn = LifoQueue(maxsize=1)
+    do=True
+    
+    Thread(target=grub, args=(window,qIn,0, do,)).start()
+    lastImg = img = get_img()
+    
+    # нужно указать в % примерные зоны
+    angelsPos = settings['sensors']['angelsPos']
+    sensorsPos = settings['sensors']['sensorsPos']
+    clear = '\n' * (len(angelsPos) + len(sensorsPos))
+    vision = Vision(img, angelsPos + sensorsPos)
+    if settings['sensors']['showGrid'] == True:
+        vision.cut_img = vision.cut_img_deb
+    gyroscope = Gyroscope(img)
+    
+    # после инциаоизации можно получить реальные позиции
+    angelsPos, sensorsPos = vision.roiSensors[:4], vision.roiSensors[4:]
+    
+    xbot()
     do = False
