@@ -5,7 +5,7 @@ import win32gui, mss, time, os, signal
 import ctypes, math
 from scipy.spatial import distance as dist
 import webcolors
-import statistics as stat
+# import statistics as stat
 
 from queue import LifoQueue, Queue
 from threading import Thread
@@ -75,6 +75,10 @@ def rgb_to_hsv(img):
     return res, mask
 
 class Gyroscope():
+    __slots__ = ['img','imgHeight','imgWidth','imgArea',
+                 'minArea','maxArea','roiPos', 'roi','buffer',
+                 'reference','angels','horizon']
+    
     def __init__(self, img):
         self.img = img
         self.imgHeight = img.shape[0]
@@ -87,11 +91,11 @@ class Gyroscope():
         self.roi = self.get_roi()
         self.reference = (1, 0)  # горизонтальный вектор, задающий горизонт
         self.angels = [0,0,0]
-        self.horizon = 0
-        self.avgHorizon = None
+        self.horizon = 0         # avg по нескольким цифрам
         self.buffer = Queue()
-        self.buffer.maxsize = 6
-        self.buffer.put(self.horizon)
+        self.buffer.maxsize = 3
+        while self.buffer.full() is False:
+            self.buffer.put(self.horizon)
         
     def get_roi_pos(self):
         center = [round(self.imgWidth/2), round(self.imgHeight/2)]
@@ -207,7 +211,7 @@ class Gyroscope():
             s = d / mdev if mdev else 1.
             res = data[s < m]
             if type(res[0])!=np.float64:
-                res = res[0]
+                return res[0]
             return res
             # else:
             #     d = np.abs(data - np.median(data))
@@ -215,23 +219,50 @@ class Gyroscope():
             #     s = d / mdev if mdev else 0.
             #     return data[s < m]
         
-        size = len(self.angels)
-        if size < 3:
+        # TODO можно считать по 2 цифрам, если их наклон будет совпадать
+        # TODO но для этого надо считать разницу их наклона между собой
+        
+        # обновление горизонтали только при нахождении не менее 3 цифр
+        if len(self.angels) < 3:
             return
-            # self.horizon = 0
         else:
             self.horizon = np.average(reject_outliers(self.angels), axis=0)
-        # else:
-        #     self.horizon = np.average(self.angels, axis=0)
 
+    # пока fixed можно не использовать
+    def avg_horizon_trace(self):
+        """
+        look Sensor.avg_color_trace()
+        :return:
+        """
+        counts = []
+        for n in range(1, self.buffer.maxsize + 1):
+            counts.append(1) # fixed
+            # counts.append(round(self.reaction/((n+1)))) # parabola
+            # counts.append(round((n + 1) / self.reaction))  # linier reverse
+        # counts = counts[::-1]
+
+        frames = list(self.buffer.queue)
+        ls = []
+        for n, i in enumerate(counts):
+            # print(n,i)
+            if i == 0: break
+            while counts[n] != 0:
+                ls.append(frames[n])
+                counts[n] -= 1
+        
+        avg = np.average(ls, axis=0)
+        return avg
+        
+    
     def update(self, img):
         self.img = img
         self.roi = self.get_roi()
         self.get_angels()
         self.get_horizon()
-        # self.buffer.task_done()
-        # self.buffer.put(self.horizon)
-        return self.horizon
+        self.buffer.get()
+        self.buffer.task_done()
+        self.buffer.put(self.horizon)
+        return np.average(list(self.buffer.queue), axis=0)
 
 class ColorLabeler:
     __slots__ = 'colors', 'lab', 'colorNames'
@@ -299,6 +330,12 @@ class ColorLabeler:
         return name
 
 class Sensor:
+    __slots__ = ('img','startPx',
+                 'endPx','centerPx',
+                 'reaction','avgColor',
+                 'avgColorTrace',
+                 'colorName','buffer')
+    
     def __init__(self,roi):
         self.img = roi[0]
         self.startPx = roi[1]
@@ -383,8 +420,8 @@ class Sensor:
 #                 ])
 
 class Vision:
-    __slots__ = ('imgHeight', 'imgWidth', 'sensors', 'yStep',
-            'xStep', 'roiCoordinats', 'roiList', 'roiSensors')
+    __slots__ = ['imgHeight', 'imgWidth', 'sensors', 'yStep',
+            'xStep', 'roiCoordinats', 'roiList', 'roiSensors']
     
     def  __init__(self, img, roi_pos):
         self.imgHeight = img.shape[0]
@@ -505,14 +542,21 @@ class Stabilizer:
             return frame, result
 
 
+def get_window(name):
+    titles = get_windows_titles()
+    for i in titles:
+        if name in i:
+            return i
+    raise Exception("Nothing to capture")
+
+
 signal.signal(signal.SIGTERM, shutdown_me)
 signal.signal(signal.SIGINT, shutdown_me)
 
-hwnd = win32gui.FindWindow(None, r'BARRIER X - you are a monster!'
-                                 r' (Last level, 1080 60fps).mp4 '
-                                 r'- MPC-BE x64 - v1.5.2 (build 3445) beta')
-# print(get_windows_titles())
-# hwnd = win32gui.FindWindow(None, 'https://player.twitch.tv - Twitch - Mozilla Firefox')
+target = get_window('MPC')
+
+hwnd = win32gui.FindWindow(None, target)
+
 try:
     win32gui.SetForegroundWindow(hwnd)
 except Exception:
@@ -530,7 +574,7 @@ if __name__ == "__main__":
     do=True
     
     Thread(target=grub, args=(window,qIn,0, do,)).start()
-    last_img = img = get_img()
+    lastImg = img = get_img()
     
     # нужно указать в % примерные зоны
     angelsPos = [0.11, 0.185, 0.81, 0.885]
@@ -555,7 +599,7 @@ if __name__ == "__main__":
         img = imutils.rotate(img, horizon)
         # input()
         # try:
-        #     img, result = stabilizer.stabilize(img, last_img)
+        #     img, result = stabilizer.stabilize(img, lastImg)
         # except:
         #     result = img
         sensors = vision.look(img)
@@ -580,7 +624,7 @@ if __name__ == "__main__":
 
         show_result(img, do)
         qIn.task_done()
-        statistic = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
+        stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
               f'\n  horizon: {horizon}' \
               f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
               f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
@@ -588,7 +632,7 @@ if __name__ == "__main__":
               f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
 
         for n, i in enumerate(sensorsPos):
-            statistic += f'\n  sens[{n}]: {sensors[i].colorName}'
-        print(statistic)
-        last_img = img
+            stat += f'\n  sens[{n}]: {sensors[i].colorName}'
+        print(stat)
+        lastImg = img
     do = False
