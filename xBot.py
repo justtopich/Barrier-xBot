@@ -110,9 +110,11 @@ def get_window(name):
     raise Exception("Nothing to capture")
 
 def xbot():
+    showStat = 0
     while True:
-        # time.sleep(0.1)
+        showStat += 1
         st = time.time()
+        # time.sleep(0.1)
         img = qIn.get()
         # imgCanny = counter_color(img)
         horizon = gyroscope.update(img)
@@ -134,31 +136,33 @@ def xbot():
             cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-        
+
         for n, i in enumerate(sensorsPos):
             cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
             cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
             cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-        
+
         if inGame is False:
             gyroscope.get_roi_pos()
 
         show_result(img, do)
 
         qIn.task_done()
-        stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
-               f'\n  horizon: {horizon}' \
-               f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
-               f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
-               f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
-               f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
-        
-        for n, i in enumerate(sensorsPos):
-            stat += f'\n  sens[{n}]: {sensors[i].colorName}'
-        print(stat)
-        lastImg = img
+        if showStat > 2:
+            stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
+                f'\n  horizon: {horizon}' \
+                f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
+                f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
+                f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
+                f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
+
+            for n, i in enumerate(sensorsPos):
+                stat += f'\n  sens[{n}]: {sensors[i].colorName}'
+
+            print(stat)
+            showStat = 0
 
 if __name__ == "__main__":
     # Windows запускает модули exe из папки пользователя

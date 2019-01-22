@@ -2,6 +2,9 @@
 # Starting point of processing frame.
 # Get information about screenshots. Cutting frames by zones and assign sensors.
 # Then passes newest zones to sensors to update their.
+# Another function is searching the finish target - the place of plane destination.
+# When agent know where finish and plane, he can looking for blocks on his way.
+# It must be after Gyroscope because this place always placed under the timer.
 ########################
 
 
@@ -117,17 +120,22 @@ class Vision:
         cv2.circle(img, self.finish_point, 5, (0, 255, 0), -1)
 
     def find_agent(self, img):
-        h = int(self.imgHeight / 2)
+        h = int(self.imgHeight / 2.5)
         src = img[h:self.imgWidth, 0:self.imgWidth]
         roi = color_rgb_filter(src)
+        # roi = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(roi, 100, 200)
-        # use _,cnts,_ for old versions
-        cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
+        # группировка близких точек
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        dilated = cv2.dilate(edges, kernel)
+
+        # use _,cnts,_ for opencv3 versions
+        cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         for cnt in cnts:
             rect = cv2.minAreaRect(cnt)
             area = int(rect[1][0] * rect[1][1])
-            approx = cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)
+            approx = cv2.approxPolyDP(cnt, 0.015 * cv2.arcLength(cnt, True), True)
             box = np.int0(cv2.boxPoints(rect))
 
             edge1 = np.int0((box[1][0] - box[0][0], box[1][1] - box[0][1]))
@@ -144,7 +152,16 @@ class Vision:
             if self.agentArea[0] > area: continue
             if self.agentArea[1] < area: continue
             if ratio > 5: continue
-            a = len(approx)
+
+            # a = len(approx)
+            # for i in approx:
+                # print(i)
+                # cv2.circle(src, tuple(i[0]), 3, (0, 255, 0), 1)
+                # cv2.imshow("Vision", src)
+                # cv2.waitKey(1)
+                # print('')
+
+            # фильтр по верщинам и выхода за заону
             if len(approx) < 6: continue
             try:
                 for px in approx:
@@ -154,13 +171,12 @@ class Vision:
                 continue
 
             x, y, w, h = cv2.boundingRect(box)
-
             cv2.rectangle(src, (x, y), (x + w, y + h), (0, 255, 255), 1)
             cv2.drawContours(src, approx, -1, (0, 255, 255), 3)
-            cv2.imshow("Vision", src)
-            cv2.imshow("Vision2", roi)
-            cv2.waitKey(1)
-            print('')
+            # cv2.imshow("Vision", src)
+            # cv2.imshow("Vision2", roi)
+            # cv2.waitKey(1)
+            # print('')
 
     def look(self, img):
         self.cut_img(img, all=True)

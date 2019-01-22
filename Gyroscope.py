@@ -1,11 +1,8 @@
 ########################
 # Сamera angle determination.
-# Used to align horizon before sensors processing - work simplification.
+# Used to align horizon before sensors processing.
 # Like a sensors gyroscope have inertia and reaction of results changes.
 # It allow to cover some inaccuracies in processing.
-# Another function is searching the finish target - the place of plane destination.
-# When agent know where finish and plane, he can looking for blocks on his way.
-# I'm calculating her here because this place always placed under the timer.
 ########################
 
 
@@ -55,9 +52,10 @@ class Gyroscope():
         self.roiSelfCenter = self.get_center(x, y, x1 - x, y1 - y)
 
         # # отладка
-        # cv2.rectangle(img, (x, y), (x1, y1), (0, 255, 0))
-        # cv2.imshow("Gyroscope", img)
+        # cv2.rectangle(self.img, (x, y), (x1, y1), (0, 255, 0))
+        # cv2.imshow("Gyroscope", self.img)
         # cv2.waitKey(1)
+        # print('')
 
         return ([[x, y], [x1, y1]])
 
@@ -68,16 +66,17 @@ class Gyroscope():
         зона всегда будет следовать за таймером
         :return:
         '''
-        x = int(self.roiSelfCenter[0] - self.imgWidth * 0.28 / 2)
-        y = int(self.roiSelfCenter[1] - self.imgHeight * 0.28 / 2)
+        x = int(self.roiSelfCenter[0] - self.imgWidth * 0.15 / 2)
+        y = int(self.roiSelfCenter[1] - self.imgHeight * 0.35 / 2)
         x1 = x + self.roiWeight
         y1 = y + self.roiHeight
         self.roiPos = ([[x, y], [x1, y1]])
 
         # отладка
-        # cv2.rectangle(self.img, (x, y), (x1, y1), (0, 255, 0))
-        # cv2.imshow("Game Boy Screen", self.img)
-        # cv2.waitKey(1)
+        cv2.rectangle(self.img, (x, y), (x1, y1), (0, 255, 0))
+        cv2.imshow("Gyroscop-Track", self.img)
+        cv2.waitKey(1)
+        print('')
 
     # получение самой зоны
     def get_roi(self):
@@ -89,10 +88,9 @@ class Gyroscope():
         gray = color_rgb_filter(self.roi)
         # self.imgShades = color_rgb_filter(self.img)
 
-        # cv2.imshow("Gyroscope", gray)
+        # cv2.imshow("Gyroscope-in", gray)
         # cv2.imshow("Gyroscope2", self.imgShades)
         # cv2.waitKey(1)
-
 
         edges = cv2.Canny(gray, 100, 200)
         # use _,cnts,_ for old versions
@@ -101,14 +99,20 @@ class Gyroscope():
         self.digitsCenter.clear()
         idx = 0
         for cnt in cnts:
+            # фильтр по выходу вершины за зону
+            approx = cv2.approxPolyDP(cnt, 0.015 * cv2.arcLength(cnt, True), True)
+            try:
+                for px in approx:
+                    assert 2 < px[0][0] < self.roiWeight - 2
+                    assert 2 < px[0][1] < self.roiHeight - 2
+            except:
+                continue
+
             rect = cv2.minAreaRect(cnt)
             box = np.int0(cv2.boxPoints(rect))  # округление координат
-            area = int(rect[1][0] * rect[1][1])  # вычисление площади
-            # print('!#area', area)
 
             # фильтр по площади
-            # a = 59 > 63 > 70
-            # a = 63 < 59 or 63 > 70
+            area = int(rect[1][0] * rect[1][1])  # вычисление площади
             if area < self.minArea or area > self.maxArea: continue
 
             # координаты двух векторов, являющихся сторонам прямоугольника
@@ -124,7 +128,7 @@ class Gyroscope():
             # фильтр по пропорциям
             ratio = edgeNorm1 / edgeNorm2
             # print('!#ratio', ratio)
-            if not ((0.33 < ratio < 0.9) or (1.44 < ratio < 2.7)):
+            if not ((0.28 < ratio < 0.9) or (1.44 < ratio < 2.7)):
                 continue
 
             # поиск большей стороны
@@ -161,7 +165,7 @@ class Gyroscope():
             # для отладки
             # x, y, w, h = cv2.boundingRect(box)
             # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
-            # cv2.imshow("Gyroscope1", self.roi)
+            # cv2.imshow("Gyroscope-angels-end", self.roi)
             # cv2.waitKey(1)
             # print('')
             # cv2.circle(self.roi, center, 6, (255, 255, 255), 1)   # центр бокса
@@ -183,19 +187,26 @@ class Gyroscope():
             ls = []
             for m in [0,1]:
                 self.digitsCenter = sorted(self.digitsCenter, key=lambda x: int(x[m]))
+
                 last = self.digitsCenter[0][m]
+
+                # x, y, w, h = self.digitsCenter[0][3]
+                # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
+
                 for n,i in enumerate(self.digitsCenter[1:]):
-                    if (i[m] / last < 1.5):
-                      ls.append(i)
+                    if (i[m] / last > 1.6):
+                        ls.append(i)
+                        last = i[m]
+                        continue
                     last = i[m]
 
-                    x, y, w, h = i[3]
-                    cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
-                    # cv2.imshow("Gyroscope", self.roi)
+                    # x, y, w, h = i[3]
+                    # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
+                    # cv2.imshow("Gyroscope-final", self.roi)
                     # cv2.waitKey(1)
                     # print('')
 
-                self.digitsCenter = ls[:]
+            for i in ls: self.digitsCenter.pop(i)
         except Exception as e:
             pass
 
@@ -266,7 +277,7 @@ class Gyroscope():
 
             self.timerAbsCenter = (x,y)
 
-            cv2.circle(self.img, self.timerAbsCenter, 5, (0, 255, 255), -1)
+            # cv2.circle(self.img, self.timerAbsCenter, 5, (0, 255, 255), -1)
             # cv2.imshow("Gyroscope1", self.img)
             # cv2.waitKey(1)
             # print('')
