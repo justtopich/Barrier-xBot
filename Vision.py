@@ -21,11 +21,12 @@ class Vision:
         self.xStep = self.imgWidth // settings['sensors']['gridColums']
         self.imgHeight -= settings['sensors']['gridRows']
         self.imgWidth -= settings['sensors']['gridColums']
-        self.finish_dist = img.shape[0] * 0.08
+        self.finish_dist = img.shape[0] * 0.08  # по сути пересчитывается
         self.finish_point = None
-        self.agentArea = [int(img.shape[0] * img.shape[1] / 500), int(img.shape[0] * img.shape[1] / 40)]
-
-
+        self.agentArea = [int(img.shape[0] * img.shape[1] / 500), int(img.shape[0] * img.shape[1] / 30)]
+        self.agentRoiTop = int(self.imgHeight / 1.9)
+        self.agentRoiBot = int(self.imgHeight * 0.9)
+        self.agentPos = None
         # координаты roi
         self.roiCoordinats = []
         for y in range(0, self.imgHeight, self.yStep):
@@ -37,14 +38,17 @@ class Vision:
 
         # весь кадр по частям
         self.roiList = []
-        self.templates = {}
         # индекс roi для сенсора
         self.cut_img(img)
         self.roiSensors = [(round(len(self.roiList) * n)) for n in roi_pos]
+        # self.inGame_sensors(img)
         self.sensors = {}
         for i in self.roiSensors:
             sensor = Sensor(self.roiList[i], settings)
             self.sensors[i] = sensor
+
+        self.templates = {}
+        # self.create_templates()
 
     def create_templates(self):
         # запоминает агента
@@ -54,12 +58,15 @@ class Vision:
             for i in os.listdir(dir):
                 if not i.endswith('.png'): continue
 
-                tmpl = cv2.imread(dir + i, cv2.IMREAD_GRAYSCALE)
-                # img = cv2.imread(dir+i)
-                # tmpl = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-                # tmpl = color_rgb_filter(tmpl)
-                # tmpl = cv2.Canny(tmpl, 50, 200)
-                h, w = tmpl.shape[:2]
+                # tmpl = cv2.imread(dir + i, cv2.IMREAD_GRAYSCALE)
+                tmpl = cv2.imread(dir + i, cv2.IMREAD_UNCHANGED)
+                tmpl = cv2.cvtColor(tmpl, cv2.COLOR_BGR2BGRA)
+                tmpl = color_rgb_filter(tmpl, 200)
+                tmpl = cv2.GaussianBlur(tmpl, (3, 3), 0)
+                edged = cv2.Canny(tmpl, 10, 250)
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+                closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+
                 self.templates['plane'].append([tmpl, w, h])
                 # break
         except Exception as e:
@@ -81,6 +88,24 @@ class Vision:
             # [[imgZone], (stPx), (endPx), (centerPos)]
             self.roiList.append([roi, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1])])
         # cv2.imwrite(f"asas.png" , img)
+
+    def inGame_sensors(self, img):
+        ls = [[(0.12,0.06),(0.17,0.1)]]
+        for n,px in enumerate(ls):
+            x = int(self.imgHeight * px[0][0])
+            y = int(self.imgWidth * px[0][1])
+            x1 = int(self.imgHeight * px[1][0])
+            y1 = int(self.imgWidth * px[1][1])
+
+            cv2.rectangle(img, (y, x),(y1,x1), (255, 255, 255), 1)
+            roi = img[x:x1, y:y1]
+            self.sensors[n] = roi
+        cv2.imshow("img", img)
+        # cv2.imshow("img2", roi)
+        cv2.waitKey(0)
+        input('')
+
+        # cv2.rectangle(img, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1]), (0, 255, 0))
 
     def cut_img_deb(self, img, all=True):
         if all is False:
@@ -105,8 +130,12 @@ class Vision:
         return self.sensors
 
     def find_finish_point(self, img):
+        avgDigitH = [self.gyroscope.digits[i]['height'] for i in self.gyroscope.digits]
+        #TODO чем больше цифра - тем меньше расстояние
+        dist = self.finish_dist - np.average(avgDigitH, axis=0) * -0.1
+        # np.average([self.digits[i]['center'] for i in self.digits], axis=1).tolist()
         x, y = self.gyroscope.timerAbsCenter
-        y1 = y + self.finish_dist
+        y1 = y + dist
         self.finish_point = (x, y1)
 
         # смещение точки по наклону таймера
@@ -119,23 +148,35 @@ class Vision:
         cv2.circle(img, self.gyroscope.timerAbsCenter, 5, (0, 255, 180), -1)
         cv2.circle(img, self.finish_point, 5, (0, 255, 0), -1)
 
-    def find_agent(self, img):
-        h = int(self.imgHeight / 2.5)
-        src = img[h:self.imgWidth, 0:self.imgWidth]
-        roi = color_rgb_filter(src)
+    def find_plane(self, img):
+        src = img[self.agentRoiTop : self.agentRoiBot, 0 : self.imgWidth]
+        roi = color_rgb_filter(src, 200)
+        # cv2.imshow("Vision2", roi)
+        # cv2.waitKey(1)
         # roi = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(roi, 100, 200)
 
         # группировка близких точек
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        dilated = cv2.dilate(edges, kernel)
+        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        # dilated = cv2.dilate(edges, kernel)
 
         # use _,cnts,_ for opencv3 versions
-        cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         for cnt in cnts:
+
+            # for tmpl in self.templates['plane']:
+            #     result = cv2.matchTemplate(roi, tmpl[0], cv2.TM_CCOEFF_NORMED)
+            #     loc = np.where(result >= 0.4)
+            #     for pt in zip(*loc[::-1]):
+            #         cv2.rectangle(src, pt, (pt[0] + tmpl[1], pt[1] + tmpl[2]), (0, 255, 0), 3)
+            #         cv2.imshow("img", src)
+            #         cv2.waitKey(0)
+
+
             rect = cv2.minAreaRect(cnt)
             area = int(rect[1][0] * rect[1][1])
             approx = cv2.approxPolyDP(cnt, 0.015 * cv2.arcLength(cnt, True), True)
+
             box = np.int0(cv2.boxPoints(rect))
 
             edge1 = np.int0((box[1][0] - box[0][0], box[1][1] - box[0][1]))
@@ -151,18 +192,19 @@ class Vision:
             # if not self.agentArea[0] < area < self.agentArea[1]: continue
             if self.agentArea[0] > area: continue
             if self.agentArea[1] < area: continue
-            if ratio > 5: continue
+            if ratio > 4: continue
 
             # a = len(approx)
             # for i in approx:
-                # print(i)
-                # cv2.circle(src, tuple(i[0]), 3, (0, 255, 0), 1)
-                # cv2.imshow("Vision", src)
-                # cv2.waitKey(1)
-                # print('')
+            #     print(i)
+            #     cv2.circle(src, tuple(i[0]), 3, (0, 255, 0), 1)
+            #     cv2.imshow("Vision", src)
+            #     cv2.waitKey(1)
+            #     print('')
 
             # фильтр по верщинам и выхода за заону
-            if len(approx) < 6: continue
+            # a = len(approx)
+            if 12 < len(approx) < 5: continue
             try:
                 for px in approx:
                     # print(px)
@@ -172,11 +214,15 @@ class Vision:
 
             x, y, w, h = cv2.boundingRect(box)
             cv2.rectangle(src, (x, y), (x + w, y + h), (0, 255, 255), 1)
-            cv2.drawContours(src, approx, -1, (0, 255, 255), 3)
+            cv2.drawContours(src, approx, -1, (0, 0, 0), 3)
             # cv2.imshow("Vision", src)
-            # cv2.imshow("Vision2", roi)
             # cv2.waitKey(1)
             # print('')
+
+    def roads_marker(self, img):
+        src = img[self.agentRoiTop: self.agentRoiBot, 0: self.imgWidth]
+
+
 
     def look(self, img):
         self.cut_img(img, all=True)
@@ -185,7 +231,7 @@ class Vision:
         except Exception as e:
             pass
         self.update_sensors()
-        self.find_agent(img)
+        self.find_plane(img)
         return self.sensors
 
 if __name__ is '__main__':

@@ -66,9 +66,11 @@ def check_sections(cfg):
 def load_config(cfg):
     def get_value(section, param, type=0):
         if type == 1:
-            val = cfg.getint(section, param)
-        elif type == 2:
             val = cfg.getboolean(section, param)
+        elif type == 2:
+            val = cfg.getint(section, param)
+        elif type == 3:
+            val = cfg.getfloat(section, param)
         else:
             val = cfg.get(section, param)
         
@@ -79,16 +81,19 @@ def load_config(cfg):
     try:
         get_value("general", "target")
         get_value("sensors", "angelsPos")
-        get_value("sensors", "sensorsPos")
-        get_value("sensors", "gridColums", 1)
-        get_value("sensors", "gridRows", 1)
-        get_value("sensors", "reaction", 1)
-        get_value("sensors", "bufferSize", 1)
-        get_value("sensors", "showGrid", 2)
-        get_value("gyroscope", "bufferSize", 1)
-        
+        # get_value("sensors", "sensorsPos")
+        get_value("sensors", "gridColums", 2)
+        get_value("sensors", "gridRows", 2)
+        get_value("sensors", "reaction", 2)
+        get_value("sensors", "bufferSize", 2)
+        get_value("sensors", "showGrid", 1)
+        get_value("gyroscope", "bufferSize", 2)
+        get_value("gyroscope", "digitMinArea", 3)
+        get_value("gyroscope", "digitMaxArea", 3)
+
         settings['sensors']['angelsPos'] = [float(i.strip()) for i in settings['sensors']['angelsPos'].split(';')]
-        settings['sensors']['sensorsPos'] = [float(i.strip()) for i in settings['sensors']['sensorsPos'].split(';')]
+        # settings['sensors']['sensorsPos'] = [float(i.strip()) for i in settings['sensors']['sensorsPos'].split(';')]
+        settings['sensors']['sensorsPos'] = []
         
         return settings
     except Exception as e:

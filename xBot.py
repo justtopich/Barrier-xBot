@@ -45,7 +45,7 @@ def convert_rgb_to_bgr(img):
     return img[:, :, ::-1]
 
 # поиск белых цветов
-def color_rgb_filter(image):
+def color_rgb_filter(image, min):
     """
     Позволяет выделять цвета не переводя в HSV формат
     за счёт чего не снижается производительность
@@ -63,10 +63,10 @@ def color_rgb_filter(image):
     # G = np.where(R == 0, 0, G)
     # B = np.where(R == 0, 0, B)
 
-    R = np.where(R < 180, 0, R)
+    R = np.where(R < min, 0, R)
     # R[R > 179] = 255
-    R = np.where(G < 180, 0, R)
-    R = np.where(B < 180, 0, R)
+    R = np.where(G < min, 0, R)
+    R = np.where(B < min, 0, R)
 
     return cv2.merge([R])
     # return cv2.merge([B,G,R])
@@ -110,9 +110,9 @@ def get_window(name):
     raise Exception("Nothing to capture")
 
 def xbot():
-    showStat = 0
+    # showStat = 0
     while True:
-        showStat += 1
+        # showStat += 1
         st = time.time()
         # time.sleep(0.1)
         img = qIn.get()
@@ -129,7 +129,7 @@ def xbot():
 
         inGame = False
         for n, i in enumerate(angelsPos):
-            if sensors[i].colorName not in ['black', 'maroon']:
+            if sensors[i].colorName not in ['black', 'maroon', 'dimgrey', 'darkolivegreen']:
                 inGame = True
             cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
             cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
@@ -150,19 +150,19 @@ def xbot():
         show_result(img, do)
 
         qIn.task_done()
-        if showStat > 2:
-            stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
-                f'\n  horizon: {horizon}' \
-                f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
-                f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
-                f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
-                f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
+        # if showStat > 2:
+        stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
+            f'\n  horizon: {horizon}' \
+            f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
+            f'\n  angle[1]: {sensors[angelsPos[1]].colorName}' \
+            f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
+            f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
 
-            for n, i in enumerate(sensorsPos):
-                stat += f'\n  sens[{n}]: {sensors[i].colorName}'
+        for n, i in enumerate(sensorsPos):
+            stat += f'\n  sens[{n}]: {sensors[i].colorName}'
 
-            print(stat)
-            showStat = 0
+        print(stat)
+        showStat = 0
 
 if __name__ == "__main__":
     # Windows запускает модули exe из папки пользователя

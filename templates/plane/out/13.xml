@@ -1,0 +1,26 @@
+<annotation>
+	<folder>out</folder>
+	<filename>13.png</filename>
+	<path>C:\Python\PyDev\NeuroBot\templates\plane\out\13.png</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>314</width>
+		<height>120</height>
+		<depth>1</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>Plane</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>13</xmin>
+			<ymin>10</ymin>
+			<xmax>249</xmax>
+			<ymax>101</ymax>
+		</bndbox>
+	</object>
+</annotation>

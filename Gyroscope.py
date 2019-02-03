@@ -5,11 +5,12 @@
 # It allow to cover some inaccuracies in processing.
 ########################
 
+import time
 
 class Gyroscope():
     __slots__ = ['img', 'imgHeight', 'imgWidth', 'imgArea', 'timerAbsCenter',
                  'minArea', 'maxArea', 'roiPos', 'buffer', 'timerRoiCenter',
-                 'reference', 'angels', 'horizon', 'digitsCenter', 'roi',
+                 'reference', 'angels', 'horizon', 'digits', 'roi',
                  'imgCenter', 'roiWeight', 'roiHeight', 'roiSelfCenter',
                  'imgShades']
 
@@ -21,12 +22,12 @@ class Gyroscope():
         self.imgCenter = [round(self.imgWidth / 2), round(self.imgHeight / 2)]
         # для фильтра по площади
         self.imgArea = self.imgWidth * self.imgHeight
-        self.minArea = self.imgArea * 0.00016
-        self.maxArea = self.imgArea * 0.0013
+        self.minArea = self.imgArea * settings['gyroscope']['digitMinArea']
+        self.maxArea = self.imgArea * settings['gyroscope']['digitMaxArea']
         # константы для смещения зоны захвата
         self.roiSelfCenter = None  # центр относительно самой зоны
-        self.roiHeight = round(self.imgHeight * 0.18)
-        self.roiWeight = round(self.imgWidth * 0.20)
+        self.roiHeight = round(self.imgHeight * 0.3)
+        self.roiWeight = round(self.imgWidth * 0.5)
         self.roiPos = self.get_roi_pos()
         self.roi = self.get_roi()
         self.reference = (1, 0)  # горизонтальный вектор, задающий горизонт
@@ -34,19 +35,19 @@ class Gyroscope():
         self.horizon = 0  # avg по всем цифрам
         self.buffer = Queue()
         self.buffer.maxsize = settings['gyroscope']['bufferSize']
-        self.digitsCenter = []
+        self.digits = {}
         self.timerRoiCenter = None  # центр таймера внутри зоны
-        self.timerAbsCenter = None  # центр таймера в исходном кадре
+        self.timerAbsCenter = self.imgCenter  # центр таймера в исходном кадре
         while self.buffer.full() is False:
-            self.buffer.put(self.horizon)
+            self.buffer.put((self.horizon,self.timerAbsCenter))
 
     # получение координат стартовой зоны
     def get_roi_pos(self):
         self.horizon = 0
         # x = round(self.imgWidth * -0.28 / 2 + self.imgCenter[0])
         # y = round(self.imgHeight * -0.4 / 2 + self.imgCenter[1])
-        x = round(self.imgWidth * -0.15 / 2 + self.imgCenter[0])
-        y = round(self.imgHeight * -0.35 / 2 + self.imgCenter[1])
+        x = round(self.imgWidth * -0.5 / 2 + self.imgCenter[0])
+        y = round(self.imgHeight * -0.4 / 2 + self.imgCenter[1])
         x1 = x + self.roiWeight
         y1 = y + self.roiHeight
         self.roiSelfCenter = self.get_center(x, y, x1 - x, y1 - y)
@@ -73,40 +74,61 @@ class Gyroscope():
         self.roiPos = ([[x, y], [x1, y1]])
 
         # отладка
-        cv2.rectangle(self.img, (x, y), (x1, y1), (0, 255, 0))
-        cv2.imshow("Gyroscop-Track", self.img)
-        cv2.waitKey(1)
-        print('')
+        # cv2.rectangle(self.img, (x, y), (x1, y1), (0, 255, 0))
+        # cv2.imshow("Gyroscop-Track", self.img)
+        # cv2.waitKey(1)
+        # print('')
 
     # получение самой зоны
     def get_roi(self):
         return self.img[self.roiPos[0][1]:self.roiPos[1][1],
                self.roiPos[0][0]:self.roiPos[1][0]]
 
-    def get_angels(self):
+    def find_digits(self):
         # gray = cv2.cvtColor(self.roi, cv2.COLOR_BGR2GRAY)
-        gray = color_rgb_filter(self.roi)
+        gray = color_rgb_filter(self.roi, 160)
+
+        # gray = cv2.inRange(self.roi,np.array([180,180,180]),np.array([255,255,255]))
         # self.imgShades = color_rgb_filter(self.img)
 
         # cv2.imshow("Gyroscope-in", gray)
-        # cv2.imshow("Gyroscope2", self.imgShades)
         # cv2.waitKey(1)
 
         edges = cv2.Canny(gray, 100, 200)
+
+        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        # dilated = cv2.dilate(edges, kernel)
+
         # use _,cnts,_ for old versions
         cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
         self.angels.clear()
-        self.digitsCenter.clear()
-        idx = 0
+        self.digits.clear()
+
+        idx = -1
+        distIdx = {}
+        distList = []
         for cnt in cnts:
-            # фильтр по выходу вершины за зону
+            aa = len(cnt)
+            # x, y, w, h = cv2.boundingRect(cnt)
+            # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (155, 150, 0), 1)
+            # cv2.imshow("Gyroscope-angels-end", self.roi)
+            # cv2.waitKey(1)
+            # print('')
+
+            # группировка близких точек
             approx = cv2.approxPolyDP(cnt, 0.015 * cv2.arcLength(cnt, True), True)
+            # фильтр по выходу вершины за зону
             try:
                 for px in approx:
                     assert 2 < px[0][0] < self.roiWeight - 2
                     assert 2 < px[0][1] < self.roiHeight - 2
             except:
                 continue
+
+            # фильтр по количеству вершин
+            a = len(approx)
+            if len(approx) < 6: continue
 
             rect = cv2.minAreaRect(cnt)
             box = np.int0(cv2.boxPoints(rect))  # округление координат
@@ -127,9 +149,13 @@ class Gyroscope():
 
             # фильтр по пропорциям
             ratio = edgeNorm1 / edgeNorm2
-            # print('!#ratio', ratio)
-            if not ((0.28 < ratio < 0.9) or (1.44 < ratio < 2.7)):
-                continue
+            if not ((0.28 < ratio < 0.9) or (1.44 < ratio < 2.7)): continue
+
+            # for i in approx:
+            #     cv2.circle(self.roi, tuple(i[0]), 3, (0, 255, 0), 1)
+                # cv2.imshow("Gyroscope=apr", self.roi)
+            #     cv2.waitKey(1)
+            #     print('')
 
             # поиск большей стороны
             if edgeNorm2 < edgeNorm1:
@@ -154,13 +180,27 @@ class Gyroscope():
             self.angels.append(angle)
 
             # подсчёт центра данной цифры
-            x, y, w, h = cv2.boundingRect(cnt)
-            center = list(self.get_center(x, y, w, h))
-            center.append(idx)
-            center.append(cv2.boundingRect(cnt))
             idx += 1
-            self.digitsCenter.append(center)
-            # return
+            x, y, w, h = cv2.boundingRect(cnt)
+            center = self.get_center(x, y, w, h)
+
+            # подсчёт расстояний до центров других цифр
+            for d in self.digits:
+                if d != idx:
+                    s = f'{d}-{idx}'
+                    D = dist.euclidean(center, self.digits[d]['center'])
+                    distList.append(D)
+                    distIdx[s] = D
+
+            self.digits[idx] = {'cnt' : cnt,
+                                'center' : center,
+                                'area' : area,
+                                'ratio' : ratio,
+                                'angle' : angle,
+                                'approx' : approx,
+                                # 'height' : cv2.norm(usedEdge)}
+                                'height' : math.fabs(usedEdge[0])}
+            # center.append(cv2.boundingRect(cnt))
 
             # для отладки
             # x, y, w, h = cv2.boundingRect(box)
@@ -183,32 +223,22 @@ class Gyroscope():
             # im = imutils.rotate(im, angle)
 
         # исключает слишком удалённые от таймера обекты
-        try:
-            ls = []
-            for m in [0,1]:
-                self.digitsCenter = sorted(self.digitsCenter, key=lambda x: int(x[m]))
+        if idx > 0:
+            try:
+                # avgDist = np.average(distList, axis=0)
+                avgDist = np.average([self.digits[i]['center'] for i in self.digits], axis=1).tolist()
+                # mid = len(avgDist) // 2
+                # avgDist = avgDist[mid:] + avgDist[:mid]
+                avgDist1 = self.reject_outliers(avgDist, m=2.25)
+                for n,i in enumerate(avgDist):
+                    x, y, w, h = cv2.boundingRect(self.digits[n]['cnt'])
+                    if i not in avgDist1:
+                        cv2.rectangle(self.roi, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                    else:
+                        cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
 
-                last = self.digitsCenter[0][m]
-
-                # x, y, w, h = self.digitsCenter[0][3]
-                # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
-
-                for n,i in enumerate(self.digitsCenter[1:]):
-                    if (i[m] / last > 1.6):
-                        ls.append(i)
-                        last = i[m]
-                        continue
-                    last = i[m]
-
-                    # x, y, w, h = i[3]
-                    # cv2.rectangle(self.roi, (x, y), (x + w, y + h), (255, 255, 0), 1)
-                    # cv2.imshow("Gyroscope-final", self.roi)
-                    # cv2.waitKey(1)
-                    # print('')
-
-            for i in ls: self.digitsCenter.pop(i)
-        except Exception as e:
-            pass
+            except Exception as e:
+                print(e)
 
         # cv2.imshow("Gyroscope", self.roi)
         # cv2.waitKey(1)
@@ -223,6 +253,25 @@ class Gyroscope():
         # cv2.imshow("Gyroscope", im)
         # cv2.waitKey(1)
 
+    def reject_outliers(self, data, m=2.):
+        # if not isinstance(data, np.ndarray):
+        # data1 = [i for i in data]
+        # data2 = [round(i * 1.1 ,1) for i in data]
+        # data = data2
+        data = np.array(data)
+        d = np.abs(data - np.median(data))
+        mdev = np.median(d)
+        s = d / mdev if mdev else 1.
+        res = data[s < m]
+        if not isinstance(res[0],np.float64):
+            return res[0]
+        return res
+        # else:
+        #     d = np.abs(data - np.median(data))
+        #     mdev = np.median(d)
+        #     s = d / mdev if mdev else 0.
+        #     return data[s < m]
+
     # поиск среднего угла поворота исключая выбросы
     def get_horizon(self):
         """
@@ -232,48 +281,33 @@ class Gyroscope():
         4. нахождение средней
         :return:
         """
-        def reject_outliers(data, m=2.):
-            # if not isinstance(data, np.ndarray):
-            data = np.array(data)
-            d = np.abs(data - np.median(data))
-            mdev = np.median(d)
-            s = d / mdev if mdev else 1.
-            res = data[s < m]
-            if type(res[0]) != np.float64:
-                return res[0]
-            return res
-            # else:
-            #     d = np.abs(data - np.median(data))
-            #     mdev = np.median(d)
-            #     s = d / mdev if mdev else 0.
-            #     return data[s < m]
 
         # TODO можно считать по 2 цифрам, если их наклон будет совпадать
         # TODO но для этого надо считать разницу их наклона между собой
 
         # обновление горизонтали только при нахождении не менее 3 цифр
         # if not (2 < len(self.angels) < 7):
-        # aa = len(self.digitsCenter)
-        if  1 > len(self.digitsCenter):
+        # aa = len(self.digits)
+        if  2 > len(self.digits):
             return
         else:
             self.get_timer_center()
-            self.horizon = np.average(reject_outliers(self.angels), axis=0)
+            self.horizon = np.average(self.reject_outliers(self.angels), axis=0)
 
             # абсолютный центр таймера
             x = self.roiPos[0][0] + self.timerRoiCenter[0]
             y = self.roiPos[0][1] + self.timerRoiCenter[1]
 
             # смещение таймера в кадре
-            try:
-                x1 = self.timerAbsCenter[0] - x
-                y1 = self.timerAbsCenter[1] - y
-                self.roiPos[0][0] -= x1
-                self.roiPos[0][1] -= y1
-                self.roiPos[1][0] -= x1
-                self.roiPos[1][1] -= y1
-            except:
-                pass
+            # try:
+            #     x1 = self.timerAbsCenter[0] - x
+            #     y1 = self.timerAbsCenter[1] - y
+            #     self.roiPos[0][0] -= x1
+            #     self.roiPos[0][1] -= y1
+            #     self.roiPos[1][0] -= x1
+            #     self.roiPos[1][1] -= y1
+            # except:
+            #     pass
 
             self.timerAbsCenter = (x,y)
 
@@ -283,29 +317,15 @@ class Gyroscope():
             # print('')
 
     # пока fixed можно не использовать
-    def avg_horizon_trace(self):
-        """
-        look Sensor.avg_color_trace()
-        :return:
-        """
-        counts = []
-        for n in range(1, self.buffer.maxsize + 1):
-            counts.append(1)  # fixed
-            # counts.append(round(self.reaction/((n+1)))) # parabola
-            # counts.append(round((n + 1) / self.reaction))  # linier reverse
-        # counts = counts[::-1]
-
-        frames = list(self.buffer.queue)
-        ls = []
-        for n, i in enumerate(counts):
-            # print(n,i)
-            if i == 0: break
-            while counts[n] != 0:
-                ls.append(frames[n])
-                counts[n] -= 1
-
-        avg = np.average(ls, axis=0)
-        return avg
+    def avg_trace(self):
+        angle = []
+        center = []
+        for frame in self.buffer.queue:
+            angle.append(frame[0])
+            center.append(frame[1])
+        self.horizon = np.average(angle, axis=0)
+        self.timerAbsCenter = np.average(center, axis=0)
+        self.timerAbsCenter = (int(self.timerAbsCenter[0]),int(self.timerAbsCenter[1]))
 
     def get_center(self, x, y, w, h):
         return (round(w / 2 + x), round(h / 2 + y))
@@ -316,14 +336,14 @@ class Gyroscope():
         середины всех цифр, т.к. она всегда находятся под ними.
         '''
         # TODO делать смещения если найдены только крайние цифры
-        # self.digitsCenter = sorted(self.digitsCenter)
+        # self.digits = sorted(self.digits)
 
-        x = np.average([i[0] for i in self.digitsCenter], axis=0)
-        y = np.average([i[1] for i in self.digitsCenter], axis=0)
+        x = np.average([self.digits[i]['center'][0] for i in self.digits], axis=0)
+        y = np.average([self.digits[i]['center'][1] for i in self.digits], axis=0)
 
-        # y = np.average([self.digitsCenter[0][1],self.digitsCenter[-1][1]], axis=0)
-        # self.digitsCenter = sorted(self.digitsCenter, key=lambda x: int(x[0]))
-        # x = np.average([self.digitsCenter[0][0],self.digitsCenter[-1][0]], axis = 0)
+        # y = np.average([self.digits[0][1],self.digits[-1][1]], axis=0)
+        # self.digits = sorted(self.digits, key=lambda x: int(x[0]))
+        # x = np.average([self.digits[0][0],self.digits[-1][0]], axis = 0)
 
         # оставить прежнее значение
         try:
@@ -334,21 +354,22 @@ class Gyroscope():
     def update(self, img):
         self.img = img
         self.roi = self.get_roi()
-        self.get_angels()
+        self.find_digits()
         # после нахождения цифр есть
         # их углы наклона и точки центров
         # self.update_roi_pos()
         self.get_horizon()
         self.buffer.get()
         self.buffer.task_done()
-        self.buffer.put(self.horizon)
+        self.buffer.put((self.horizon,self.timerAbsCenter))
+        self.avg_trace()
 
         # отладка
         # print('!#roiPos',self.roiPos)
 
-        return np.average(list(self.buffer.queue), axis=0)
+        return self.horizon
 
 if __name__ is '__main__':
     raise Exception('Use xBot to start')
 else:
-    from __main__ import np, cv2, math, Queue, color_rgb_filter
+    from __main__ import np, cv2, math, Queue, color_rgb_filter, dist
