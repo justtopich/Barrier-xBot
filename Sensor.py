@@ -9,7 +9,7 @@ class Sensor:
     __slots__ = ('img', 'startPx',
                  'endPx', 'centerPx',
                  'reaction', 'avgColor',
-                 'avgColorTrace',
+                 'avgColorTrace', 'safety',
                  'colorName', 'buffer')
 
     def __init__(self, roi, settings):
@@ -17,7 +17,7 @@ class Sensor:
         self.startPx = roi[1]
         self.endPx = roi[2]
         self.centerPx = self.get_center()
-        # self.lastState = None
+        self.safety = 0
         self.reaction = settings['sensors']['reaction']
         self.avgColor = self.avg_color()
         self.avgColorTrace = self.avgColor

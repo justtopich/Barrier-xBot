@@ -3,16 +3,23 @@ from threading import Thread
 import time, os, signal
 import ctypes
 
-import win32gui, mss
+import win32gui, mss, win32api, win32con
+
 import cv2, imutils
 import numpy as np
 import math
 import webcolors
 from scipy.spatial import distance as dist
 
+safety = {6: ['coral', 'tomato', 'lightpink', 'sandybrown', 'lightsalmon', 'darkorange'],
+          4: ['indianred', 'lightcoral', 'crimson', 'salmon', 'chocolate', 'orangered' ],
+          2: ['brown', 'polevioletred', 'mediumvioletred', 'sienna', 'deeppink'],
+          1: ['indigo', 'midnightblue', 'darkslateblue', 'darkslategrey', 'purple', 'dimgrey', 'novy', 'black']}
+
 
 def shutdown_me(signal, frame):
     os._exit(1)
+
 
 def get_windows_titles():
     EnumWindows = ctypes.windll.user32.EnumWindows
@@ -20,9 +27,9 @@ def get_windows_titles():
     GetWindowText = ctypes.windll.user32.GetWindowTextW
     GetWindowTextLength = ctypes.windll.user32.GetWindowTextLengthW
     IsWindowVisible = ctypes.windll.user32.IsWindowVisible
-    
+
     titles = []
-    
+
     def foreach_window(hwnd, lParam):
         if IsWindowVisible(hwnd):
             length = GetWindowTextLength(hwnd)
@@ -30,9 +37,19 @@ def get_windows_titles():
             GetWindowText(hwnd, buff, length + 1)
             titles.append(buff.value)
         return True
-    
+
     EnumWindows(EnumWindowsProc(foreach_window), 0)
+    # print(titles)
     return titles
+
+
+def get_window(name):
+    titles = get_windows_titles()
+    for i in titles:
+        if name in i:
+            return i
+    raise Exception("Nothing to capture")
+
 
 def show_result(img, do):
     while do == True:
@@ -41,8 +58,10 @@ def show_result(img, do):
             cv2.destroyAllWindows()
         return
 
+
 def convert_rgb_to_bgr(img):
     return img[:, :, ::-1]
+
 
 # поиск белых цветов
 def color_rgb_filter(image, min):
@@ -52,7 +71,7 @@ def color_rgb_filter(image, min):
     :param image:
     :return:
     """
-    B,G,R,_ = cv2.split(image)
+    B, G, R, _ = cv2.split(image)
 
     # R = np.where(R < 160, 0, R)
     # G = np.where(G < 160, 0, G)
@@ -71,15 +90,16 @@ def color_rgb_filter(image, min):
     return cv2.merge([R])
     # return cv2.merge([B,G,R])
 
+
 def grub(window, qIn, x, do):
-    print(f'\nStart grubber {x}')
+    print(f'Start grubber {x}')
     with mss.mss() as sct:
         while do is True:
             # imgSrt = sct.grab(window)
             img = sct.grab(window)
             # img = Image.frombytes('RGB', imgSrt.size, imgSrt.rgb)
             img = np.array(img)
-            
+
             try:
                 qIn.put(img)
             except:
@@ -102,13 +122,6 @@ def rgb_to_hsv(img):
     res = cv2.bitwise_and(img, img, mask=mask)
     return res, mask
 
-def get_window(name):
-    titles = get_windows_titles()
-    for i in titles:
-        if name in i:
-            return i
-    raise Exception("Nothing to capture")
-
 def xbot():
     # showStat = 0
     while True:
@@ -124,6 +137,7 @@ def xbot():
         #     img, result = stabilizer.stabilize(img, lastImg)
         # except:
         #     result = img
+        # print('sens')
         sensors = vision.look(img)
         # res, mas = rgb_to_hsv(img)
 
@@ -144,10 +158,11 @@ def xbot():
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
+        # for i in vision.plane['sensors']:
+        #     cv2.circle(img, vision.plane['sensors'][i].centerPx, 9, vision.plane['sensors'][i].avgColorTrace, -1)
+
         if inGame is False:
             gyroscope.get_roi_pos()
-
-        show_result(img, do)
 
         qIn.task_done()
         # if showStat > 2:
@@ -158,11 +173,18 @@ def xbot():
             f'\n  angle[2]: {sensors[angelsPos[2]].colorName}' \
             f'\n  angle[3]: {sensors[angelsPos[3]].colorName}'
 
-        for n, i in enumerate(sensorsPos):
-            stat += f'\n  sens[{n}]: {sensors[i].colorName}'
+        for i in (vision.plane['sensors']):
+            stat += f'\n  sens[{i}]: {vision.plane["sensors"][i].safety} {vision.plane["sensors"][i].colorName}'
 
-        print(stat)
-        showStat = 0
+        # print(stat)
+        d = 11
+        for text in stat[5:].split('\n '):
+            cv2.putText(img, text, (10, sensors[angelsPos[0]].endPx[1] + d),
+                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+            d += 12
+        # showStat = 0
+        controller.play(vision.plane['sensors'])
+        show_result(img, do)
 
 if __name__ == "__main__":
     # Windows запускает модули exe из папки пользователя
@@ -175,6 +197,7 @@ if __name__ == "__main__":
     from Gyroscope import Gyroscope
     from Sensor import Sensor
     from Vision import Vision
+    from Controller import Controller
 
     signal.signal(signal.SIGTERM, shutdown_me)
     signal.signal(signal.SIGINT, shutdown_me)
@@ -191,6 +214,12 @@ if __name__ == "__main__":
     window = win32gui.GetWindowRect(hwnd)
     print('window', window)
     # stabilizer = Stabilizer()
+
+    # enter = 77
+    win32gui.SetForegroundWindow(hwnd)
+    # win32api.keybd_event(18, 0, 0, 0)
+    # win32api.keybd_event(win32con.SHIFT_PRESSED, 0, win32con.KEYEVENTF_EXTENDEDKEY, 0)
+    controller = Controller()
 
     font = cv2.FONT_HERSHEY_SIMPLEX
 

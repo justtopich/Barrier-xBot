@@ -14,6 +14,7 @@ class Vision:
     #         'xStep', 'roiCoordinats', 'roiList', 'roiSensors']
 
     def __init__(self, img, roi_pos, settings, gyroscope):
+        print('Vision initialization')
         self.gyroscope = gyroscope # ссылка на гироскоп
         self.imgHeight = img.shape[0]
         self.imgWidth = img.shape[1]
@@ -42,12 +43,20 @@ class Vision:
         self.cut_img(img)
         self.roiSensors = [(round(len(self.roiList) * n)) for n in roi_pos]
         # self.inGame_sensors(img)
+        print('Sensors initialization')
         self.sensors = {}
         for i in self.roiSensors:
             sensor = Sensor(self.roiList[i], settings)
             self.sensors[i] = sensor
 
-        self.templates = {}
+        self.plane = {'sensors': {'front' : Sensor(self.roiList[i], settings),
+                                  'back': Sensor(self.roiList[i], settings),
+                                  'left': Sensor(self.roiList[i], settings),
+                                  'right': Sensor(self.roiList[i], settings)
+                                  }}
+
+
+        # self.templates = {}
         # self.create_templates()
 
     def create_templates(self):
@@ -135,13 +144,17 @@ class Vision:
         dist = self.finish_dist - np.average(avgDigitH, axis=0) * -0.1
         # np.average([self.digits[i]['center'] for i in self.digits], axis=1).tolist()
         x, y = self.gyroscope.timerAbsCenter
-        y1 = y + dist
-        self.finish_point = (x, y1)
 
-        # смещение точки по наклону таймера
-        x2 = (y1 - y) * math.sin(math.radians(-self.gyroscope.horizon)) + x
-        y2 = (y1 - y) * math.cos(math.radians(-self.gyroscope.horizon)) + y
-        self.finish_point = (int(x2), int(y2))
+        # смещение точки по наклону таймера; вращаем вокруг x,y
+        try:
+            y1 = int(y + dist)
+            # self.finish_point = (x, y1)
+            x2 = (y1 - y) * math.sin(math.radians(-self.gyroscope.horizon)) + x
+            y2 = (y1 - y) * math.cos(math.radians(-self.gyroscope.horizon)) + y
+            self.finish_point = (int(x2), int(y2))
+        except:
+            # self.finish_point = (x, y)
+            pass
 
         # точка схождения дорог
         # точка схождения дорог с учётом наклона
@@ -212,29 +225,101 @@ class Vision:
             except:
                 continue
 
-            x, y, w, h = cv2.boundingRect(box)
-            cv2.rectangle(src, (x, y), (x + w, y + h), (0, 255, 255), 1)
+            # нахождение центра верхней строны бокса. От него отклвдывается сенсор перед самолётом
+            x, y, w, h = cv2.boundingRect(cnt)
+            center = self.gyroscope.get_center(x, y, w, h)
+            center = (center[0], center[1] + self.agentRoiTop)
+
+            self.plane['cnt'] = cnt
+            self.plane['approx'] = approx
+            self.plane['center'] = center
+
+            cv2.rectangle(src, (x, y), (x + w, y + h), (0, 0, 0), 1)
             cv2.drawContours(src, approx, -1, (0, 0, 0), 3)
+            cv2.circle(img, self.plane['center'], 3, (0, 0, 0), 1)
             # cv2.imshow("Vision", src)
             # cv2.waitKey(1)
             # print('')
+            break
 
     def roads_marker(self, img):
         src = img[self.agentRoiTop: self.agentRoiBot, 0: self.imgWidth]
 
+    def plane_sensors(self,img):
+        def update_sensor(target, point):
+            try:
+                r = 20
+                roi = img[point[1] - r:int(point[1] + 2 * r / 2),
+                               point[0] - r:int(point[0] + 2 * r / 2)]
+                if len(roi[0]) == 0:
+                    # print('pass')
+                    return
+                # cv2.imshow("Vision2", roi)
+                # cv2.waitKey(1)
+                self.plane['sensors'][target].update([roi,0])
+                cv2.circle(img, point, 9, self.plane['sensors'][target].avgColorTrace, -1)
+                cv2.circle(img, point, 10, (255, 255, 255), 1)
 
+                for i in safety:
+                    if self.plane['sensors'][target].colorName in safety[i]:
+                        self.plane['sensors'][target].safety = i
+
+            except Exception as e:
+                pass
+                # print(f'plane sensor update {e}')
+
+        try:
+            pw, ph = self.plane['center']
+        except:
+            return
+        fw, fh  = self.finish_point
+
+        h = ph - (ph - fh) * 0.5
+        if pw < fw:
+            w = pw + (fw - pw) * 0.5
+        else:
+            w = pw - (pw - fw) * 0.5
+        front = (int(w), int(h))
+        update_sensor('front', front)
+
+        h = ph - (ph - fh) * -0.5
+        if pw < fw:
+            w = pw + (fw - pw) * -0.5
+        else:
+            w = pw - (pw - fw) * -0.5
+        back = (int(w), int(h))
+        update_sensor('back', back)
+
+        c = 90 * (w/h)
+        x2 = (fh - ph) * math.sin(math.radians(c)) + pw * 0.6
+        y2 = (fh - ph) * math.cos(math.radians(c)) + ph
+        left = (int(x2), int(y2))
+        update_sensor('left',left)
+
+        d = 180 + c
+        x2 = (fh - ph) * math.sin(math.radians(d)) + pw * 1.4
+        y2 = (fh - ph) * math.cos(math.radians(d)) + ph
+        right = (int(x2), int(y2))
+        update_sensor('right',right)
+
+        # cv2.line(img, self.plane['center'],self.plane['sensors']['front'], (0, 0, 0), 1)
 
     def look(self, img):
         self.cut_img(img, all=True)
         try:
             self.find_finish_point(img)
         except Exception as e:
-            pass
+            print(f'Vision: cannot find finish point: {e}')
         self.update_sensors()
         self.find_plane(img)
+        try:
+            self.plane_sensors(img)
+        except Exception as e:
+            pass
+            # print(f"Vision: can't get plane sensors: {e}")
         return self.sensors
 
 if __name__ is '__main__':
     raise Exception('Use xBot to start')
 else:
-     from __main__ import os, cv2, np, math, Sensor, color_rgb_filter, show_result
+     from __main__ import os, cv2, np, math, Sensor, color_rgb_filter, show_result, dist, safety

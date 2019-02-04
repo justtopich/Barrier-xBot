@@ -15,6 +15,7 @@ class Gyroscope():
                  'imgShades']
 
     def __init__(self, img, settings):
+        print('Gyroscope initialization')
         self.img = img
         self.imgShades = None   # быстрое выделение белый объектов, хранит для Vision
         self.imgHeight = img.shape[0]
