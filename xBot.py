@@ -8,18 +8,47 @@ import win32gui, mss, win32api, win32con
 import cv2, imutils
 import numpy as np
 import math
-import webcolors
+import webcolorsExt as webcolors
 from scipy.spatial import distance as dist
 
-safety = {6: ['coral', 'tomato', 'lightpink', 'sandybrown', 'lightsalmon', 'darkorange'],
-          4: ['indianred', 'lightcoral', 'crimson', 'salmon', 'chocolate', 'orangered' ],
-          2: ['brown', 'polevioletred', 'mediumvioletred', 'sienna', 'deeppink'],
-          1: ['indigo', 'midnightblue', 'darkslateblue', 'darkslategrey', 'purple', 'dimgrey', 'novy', 'black']}
 
+
+safety = {8: ['lightcoral', 'lightpink', 'sandybrown', 'lightsalmon', 'darkorange', 'salmon', 'burlywood',
+              'palegoldenrod', 'gold'],
+          6: ['chocolate', 'orangered', 'hotpink', 'darksalmon', 'coral', 'tan', 'tomatos1', 'tomatos2'],
+          4: ['crimson', 'firebrick', 'tomato',  'palevioletred', 'mediumvioletred',  'deeppink','tomatot3',
+              'tomatot2','tomatot1', 'indianred'],
+          2: ['lightgrey','darkslategrey', 'saddiebrown', 'dimgrey', 'navy', 'purple', 'grey', 'darkgrey', 'brown',
+              'sienna'],
+          0: ['navy', 'darkslateblue', 'indigo', 'midnightblue', 'blue', 'white', 'blanchedalmond',
+              'gainsboro', 'lavender', 'antiquewhite', 'whitesmoke', 'ivory', 'papayawhip']}
+
+
+class Monitor(Thread):
+    def __init__(self):
+        super(Monitor, self, ).__init__()
+        self.frames = Queue()
+        self.frames.maxsize=1
+        self.start()
+
+    def run(self):
+        cv2.startWindowThread()
+        cv2.namedWindow('image')
+        cv2.moveWindow('image', 0, 30)
+        while True:
+            frame = self.frames.get()
+            cv2.imshow('image', frame)
+            cv2.waitKey(1)
+            self.frames.task_done()
+
+    def show_result(self, img):
+        try:
+            self.frames.put_nowait(img)
+        except:
+            pass
 
 def shutdown_me(signal, frame):
     os._exit(1)
-
 
 def get_windows_titles():
     EnumWindows = ctypes.windll.user32.EnumWindows
@@ -42,7 +71,6 @@ def get_windows_titles():
     # print(titles)
     return titles
 
-
 def get_window(name):
     titles = get_windows_titles()
     for i in titles:
@@ -50,18 +78,8 @@ def get_window(name):
             return i
     raise Exception("Nothing to capture")
 
-
-def show_result(img, do):
-    while do == True:
-        cv2.imshow('OpenCV/Numpy normal', img)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
-        return
-
-
 def convert_rgb_to_bgr(img):
     return img[:, :, ::-1]
-
 
 # поиск белых цветов
 def color_rgb_filter(image, min):
@@ -90,7 +108,6 @@ def color_rgb_filter(image, min):
     return cv2.merge([R])
     # return cv2.merge([B,G,R])
 
-
 def grub(window, qIn, x, do):
     print(f'Start grubber {x}')
     with mss.mss() as sct:
@@ -101,7 +118,7 @@ def grub(window, qIn, x, do):
             img = np.array(img)
 
             try:
-                qIn.put(img)
+                qIn.put_nowait(img)
             except:
                 pass
     print(f'\nStop grubber {x}')
@@ -124,26 +141,32 @@ def rgb_to_hsv(img):
 
 def xbot():
     # showStat = 0
+    clearCount = 0
     while True:
         # showStat += 1
         st = time.time()
-        # time.sleep(0.1)
+
+        try:
+            if st - actionTime > 0.03:
+                clearCount += 1
+                for i in vision.sensors:
+                    vision.sensors[i].clear_buffer()
+                    vision.sensors[i].buffer.put(None)
+                actionTime = None
+        except:
+            pass
+
         img = qIn.get()
-        # imgCanny = counter_color(img)
         horizon = gyroscope.update(img)
         img = imutils.rotate(img, horizon)
-        # input()
-        # try:
-        #     img, result = stabilizer.stabilize(img, lastImg)
-        # except:
-        #     result = img
-        # print('sens')
         sensors = vision.look(img)
-        # res, mas = rgb_to_hsv(img)
+
+        # print("!#1", time.time() - st)
 
         inGame = False
         for n, i in enumerate(angelsPos):
-            if sensors[i].colorName not in ['black', 'maroon', 'dimgrey', 'darkolivegreen']:
+            if sensors[i].colorName not in ['black', 'maroon', 'dimgrey', 'darkhaki', 'tan', 'wheat', 'silver',
+                                            'darkolivegreen', 'darkslategrey', 'grey', 'rosybrown','darkgrey']:
                 inGame = True
             cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
             cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
@@ -151,21 +174,19 @@ def xbot():
             cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
                         font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
-        for n, i in enumerate(sensorsPos):
-            cv2.rectangle(img, sensors[i].startPx, sensors[i].endPx, (255, 255, 255))
-            cv2.circle(img, sensors[i].centerPx, 9, sensors[i].avgColorTrace, -1)
-            cv2.circle(img, sensors[i].centerPx, 10, (255, 255, 255), 1)
-            cv2.putText(img, f'{n}', (sensors[i].startPx[0], sensors[i].endPx[1]),
-                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-
-        # for i in vision.plane['sensors']:
-        #     cv2.circle(img, vision.plane['sensors'][i].centerPx, 9, vision.plane['sensors'][i].avgColorTrace, -1)
+        try:
+            cv2.circle(img, gyroscope.timerAbsCenter, 5, (0, 255, 180), -1)
+            cv2.circle(img, vision.finish_point, 5, (0, 255, 0), -1)
+        except:
+            pass
 
         if inGame is False:
             gyroscope.get_roi_pos()
+        else:
+            controller.play(vision.plane['sensors'])
+            if controller.action == 2 or controller.action == 3:
+                actionTime = time.time()
 
-        qIn.task_done()
-        # if showStat > 2:
         stat = f'{clear}  fps: {round(1 / (time.time()-st),1)} In game: {inGame}' \
             f'\n  horizon: {horizon}' \
             f'\n  angle[0]: {sensors[angelsPos[0]].colorName}' \
@@ -176,15 +197,23 @@ def xbot():
         for i in (vision.plane['sensors']):
             stat += f'\n  sens[{i}]: {vision.plane["sensors"][i].safety} {vision.plane["sensors"][i].colorName}'
 
-        # print(stat)
         d = 11
         for text in stat[5:].split('\n '):
             cv2.putText(img, text, (10, sensors[angelsPos[0]].endPx[1] + d),
-                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                        font, 0.4, (150, 150, 0), 1, cv2.LINE_AA)
             d += 12
-        # showStat = 0
-        controller.play(vision.plane['sensors'])
-        show_result(img, do)
+
+        cv2.putText(img, str(controller.action), (300, 40),
+                    font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+        cv2.putText(img, f'clear {clearCount}', (300, 60),
+                    font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # print("!#2", time.time() - st)
+        monitor.show_result(img)
+        qIn.task_done()
+        # print("!#3", time.time() - st)
+
 
 if __name__ == "__main__":
     # Windows запускает модули exe из папки пользователя
@@ -198,6 +227,7 @@ if __name__ == "__main__":
     from Sensor import Sensor
     from Vision import Vision
     from Controller import Controller
+    monitor = Monitor()
 
     signal.signal(signal.SIGTERM, shutdown_me)
     signal.signal(signal.SIGINT, shutdown_me)
@@ -221,7 +251,8 @@ if __name__ == "__main__":
     # win32api.keybd_event(win32con.SHIFT_PRESSED, 0, win32con.KEYEVENTF_EXTENDEDKEY, 0)
     controller = Controller()
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
+    # font = cv2.FONT_HERSHEY_SIMPLEX
+    font = cv2.FONT_HERSHEY_COMPLEX
 
     qIn = LifoQueue(maxsize=1)
     do=True

@@ -62,6 +62,10 @@ class ColorLabeler:
             bd = (b_c - rgb[0]) ** 2
             min_colours[(rd + gd + bd)] = name
 
+        a = (min_colours[min(min_colours.keys())])
+        if a == 'tomato':
+            a = min(min_colours.keys())
+
         return min_colours[min(min_colours.keys())]
 
     def get_html_name(self, rgbIn):

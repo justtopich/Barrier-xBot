@@ -7,6 +7,7 @@
 # It must be after Gyroscope because this place always placed under the timer.
 ########################
 
+import time
 
 class Vision:
     # не наследуется
@@ -25,8 +26,8 @@ class Vision:
         self.finish_dist = img.shape[0] * 0.08  # по сути пересчитывается
         self.finish_point = None
         self.agentArea = [int(img.shape[0] * img.shape[1] / 500), int(img.shape[0] * img.shape[1] / 30)]
-        self.agentRoiTop = int(self.imgHeight / 1.9)
-        self.agentRoiBot = int(self.imgHeight * 0.9)
+        self.agentRoiTop = int(self.imgHeight / 1.9)    # вверхняя граница зоны захвата
+        self.agentRoiBott = int(self.imgHeight * 0.9)    # нижняя граница зоны захвата
         self.agentPos = None
         # координаты roi
         self.roiCoordinats = []
@@ -53,9 +54,9 @@ class Vision:
                                   'back': Sensor(self.roiList[i], settings),
                                   'left': Sensor(self.roiList[i], settings),
                                   'right': Sensor(self.roiList[i], settings)
-                                  }}
-
-
+                                  },
+                      'top': [],
+                      'bottom': []}
         # self.templates = {}
         # self.create_templates()
 
@@ -123,7 +124,7 @@ class Vision:
             ls = self.roiCoordinats
         self.roiList.clear()
         for pos in ls:
-            cv2.rectangle(img, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1]), (0, 255, 0))
+            # cv2.rectangle(img, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1]), (0, 255, 0))
             roi = img[pos[0][1]:pos[1][1], pos[0][0]:pos[1][0]]
             self.roiList.append([roi, (pos[0][0], pos[0][1]), (pos[1][0], pos[1][1])])
 
@@ -158,11 +159,11 @@ class Vision:
 
         # точка схождения дорог
         # точка схождения дорог с учётом наклона
-        cv2.circle(img, self.gyroscope.timerAbsCenter, 5, (0, 255, 180), -1)
-        cv2.circle(img, self.finish_point, 5, (0, 255, 0), -1)
+        # cv2.circle(img, self.gyroscope.timerAbsCenter, 5, (0, 255, 180), -1)
+        # cv2.circle(img, self.finish_point, 5, (0, 255, 0), -1)
 
     def find_plane(self, img):
-        src = img[self.agentRoiTop : self.agentRoiBot, 0 : self.imgWidth]
+        src = img[self.agentRoiTop : self.agentRoiBott, 0 : self.imgWidth]
         roi = color_rgb_filter(src, 200)
         # cv2.imshow("Vision2", roi)
         # cv2.waitKey(1)
@@ -216,14 +217,21 @@ class Vision:
             #     print('')
 
             # фильтр по верщинам и выхода за заону
-            # a = len(approx)
             if 12 < len(approx) < 5: continue
             try:
+                # self.plane['top'] = approx[0][0]
+                # self.plane['bottom'] = approx[0][0]
                 for px in approx:
-                    # print(px)
                     assert px[0][1] > 2
-            except:
+                    # if px[0][1] < self.plane['top'][1]:
+                    #     self.plane['top'] = px[0]
+                    # elif px[0][1] > self.plane['bottom'][1]:
+                    #     self.plane['bottom'] = px[0]
+            except Exception as e:
                 continue
+
+            # self.plane['bottom'][1] += self.agentRoiTop
+            # self.plane['top'][1] += self.agentRoiTop
 
             # нахождение центра верхней строны бокса. От него отклвдывается сенсор перед самолётом
             x, y, w, h = cv2.boundingRect(cnt)
@@ -237,20 +245,22 @@ class Vision:
             cv2.rectangle(src, (x, y), (x + w, y + h), (0, 0, 0), 1)
             cv2.drawContours(src, approx, -1, (0, 0, 0), 3)
             cv2.circle(img, self.plane['center'], 3, (0, 0, 0), 1)
+            # cv2.circle(img, tuple(self.plane['top']), 5, (0, 150, 150), 1)
+            # cv2.circle(img, tuple(self.plane['bottom']), 5, (150, 0, 150), 1)
             # cv2.imshow("Vision", src)
             # cv2.waitKey(1)
             # print('')
             break
 
     def roads_marker(self, img):
-        src = img[self.agentRoiTop: self.agentRoiBot, 0: self.imgWidth]
+        src = img[self.agentRoiTop: self.agentRoiBott, 0: self.imgWidth]
 
     def plane_sensors(self,img):
         def update_sensor(target, point):
             try:
                 r = 20
                 roi = img[point[1] - r:int(point[1] + 2 * r / 2),
-                               point[0] - r:int(point[0] + 2 * r / 2)]
+                          point[0] - r:int(point[0] + 2 * r / 2)]
                 if len(roi[0]) == 0:
                     # print('pass')
                     return
@@ -263,49 +273,77 @@ class Vision:
                 for i in safety:
                     if self.plane['sensors'][target].colorName in safety[i]:
                         self.plane['sensors'][target].safety = i
+                        return
 
             except Exception as e:
                 pass
                 # print(f'plane sensor update {e}')
 
+        # TODO find better positions
+        # определения центра сенсоров
         try:
             pw, ph = self.plane['center']
         except:
             return
         fw, fh  = self.finish_point
 
-        h = ph - (ph - fh) * 0.5
+        # передний на пол пути до точки финиша
+        h = ph - (ph - fh) * 0.6
         if pw < fw:
-            w = pw + (fw - pw) * 0.5
+            w = pw + (fw - pw) * 0.6
         else:
-            w = pw - (pw - fw) * 0.5
+            w = pw - (pw - fw) * 0.6
         front = (int(w), int(h))
         update_sensor('front', front)
 
         h = ph - (ph - fh) * -0.5
         if pw < fw:
-            w = pw + (fw - pw) * -0.5
+            w = pw + (fw - pw) * -0.7
         else:
-            w = pw - (pw - fw) * -0.5
+            w = pw - (pw - fw) * -0.7
         back = (int(w), int(h))
         update_sensor('back', back)
 
-        c = 90 * (w/h)
-        x2 = (fh - ph) * math.sin(math.radians(c)) + pw * 0.6
-        y2 = (fh - ph) * math.cos(math.radians(c)) + ph
-        left = (int(x2), int(y2))
-        update_sensor('left',left)
+        # c = 90 * (w/h)
+        # x2 = (fh - ph) * math.sin(math.radians(c)) + pw * 0.6
+        # y2 = (fh - ph) * math.cos(math.radians(c)) + ph
+        # left = (int(x2), int(y2))
+        # update_sensor('left',left)
+        #
+        # d = 180 + c
+        # x2 = (fh - ph) * math.sin(math.radians(d)) + pw * 1.4
+        # y2 = (fh - ph) * math.cos(math.radians(d)) + ph
+        # right = (int(x2), int(y2))
+        # update_sensor('right',right)
 
-        d = 180 + c
-        x2 = (fh - ph) * math.sin(math.radians(d)) + pw * 1.4
-        y2 = (fh - ph) * math.cos(math.radians(d)) + ph
-        right = (int(x2), int(y2))
-        update_sensor('right',right)
+        # left = (int(self.imgWidth * 0.15), self.plane['center'][1] - 10)
+        left = [int(self.imgWidth * 0.24), front[1] + 15]
+        if self.plane['center'][0] - left[0] < 50:
+            # оттодвигает сенсор чтобы он не попадал на самолёт.
+            left[0] -= int(left[0]/self.plane['center'][0]*40)
+            left[1] -= int(self.plane['center'][0]/left[0]*30)
+        # elif self.plane['center'][0] - left[0] > 150:
+        #     a = self.plane['center'][0] - left[0]
+        #     left[0] += int(a / 2)
+        #     left[1] += int(self.plane['center'][0]/left[0]*30)
+        update_sensor('left',tuple(left))
+
+        right = [int(self.imgWidth * 0.76), front[1] + 15]
+        aa = right[0] / self.plane['center'][0]
+        if right[0] - self.plane['center'][0] < 50:
+            right[0] += int(self.plane['center'][0]/right[0]*40)
+            right[1] -= int(self.plane['center'][0]/right[0]*30)
+        # elif right[0]/self.plane['center'][0] > 1.8:
+        #     a = right[0] - self.plane['center'][0]
+            # right[0] -= int(a / 2)
+            # right[1] += int(self.plane['center'][0]/right[0]*30)
+        update_sensor('right',tuple(right))
 
         # cv2.line(img, self.plane['center'],self.plane['sensors']['front'], (0, 0, 0), 1)
 
     def look(self, img):
         self.cut_img(img, all=True)
+
         try:
             self.find_finish_point(img)
         except Exception as e:
@@ -322,4 +360,4 @@ class Vision:
 if __name__ is '__main__':
     raise Exception('Use xBot to start')
 else:
-     from __main__ import os, cv2, np, math, Sensor, color_rgb_filter, show_result, dist, safety
+     from __main__ import os, cv2, np, math, Sensor, color_rgb_filter, dist, safety

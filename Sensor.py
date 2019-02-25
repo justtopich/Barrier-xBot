@@ -19,17 +19,24 @@ class Sensor:
         self.centerPx = self.get_center()
         self.safety = 0
         self.reaction = settings['sensors']['reaction']
+        self.buffer = Queue()
+        self.buffer.maxsize = settings['sensors']['bufferSize']
         self.avgColor = self.avg_color()
         self.avgColorTrace = self.avgColor
         self.colorName = self.avg_color_name(self.avgColor)
-        self.buffer = Queue()
-        self.buffer.maxsize = settings['sensors']['bufferSize']
         while self.buffer.full() is False:
             self.buffer.put(self.avgColor)
 
     def get_center(self):
         return (round(((self.endPx[0] - self.startPx[0]) / 2) + self.startPx[0]),
                 round(((self.endPx[1] - self.startPx[1]) / 2) + self.startPx[1]))
+
+    def clear_buffer(self):
+        self.buffer.mutex.acquire()
+        self.buffer.queue.clear()
+        self.buffer.all_tasks_done.notify_all()
+        self.buffer.unfinished_tasks = 0
+        self.buffer.mutex.release()
 
     def avg_color(self):
         """
@@ -38,6 +45,10 @@ class Sensor:
         """
         avgRow = np.average(self.img, axis=0)
         avg = np.average(avgRow, axis=0)
+        a = np.where(avg < 220, True, False)
+        if True not in a:
+            self.clear_buffer()
+
         return [int(avg[0]), int(avg[1]), int(avg[2])]
 
     def avg_color_trace(self):
@@ -56,7 +67,7 @@ class Sensor:
         #           ]
 
         counts = []
-        for n in range(1, self.buffer.maxsize + 1):
+        for n in range(1, self.buffer.unfinished_tasks + 1):
             # counts.append(1) # fixed
             # counts.append(round(self.reaction/((n+1)))) # parabola
             counts.append(round((n + 1) / self.reaction))  # linier reverse
@@ -71,7 +82,7 @@ class Sensor:
                 ls.append(frames[n])
                 counts[n] -= 1
         # input()
-        if len(ls) == 0:
+        if ls == []:
             raise Exception("No frames to calc avgColor. Set right reaction and buffer.")
         avg = np.average(ls, axis=0)
         # avg = (int(avg[0]), int(avg[1]), int(avg[2]), int(avg[3]))
@@ -93,7 +104,7 @@ class Sensor:
 if __name__ is '__main__':
     raise Exception('Use xBot to start')
 else:
-    from __main__ import np, Queue
+    from __main__ import np, Queue, time
     from ColorLabeler import ColorLabeler
 
     colorLabeler = ColorLabeler()
