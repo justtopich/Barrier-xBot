@@ -1,6 +1,6 @@
 # python_version '3.8.6'; platform == 'win32'
 
-numpy==1.19.3
+numpy==1.22.0
 opencv-python==4.4.0.46
 mss==6.1.0
 imutils==0.5.3
